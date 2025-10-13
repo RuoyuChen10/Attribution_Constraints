@@ -90,14 +90,14 @@ class PascalSaliencyDataset(Dataset):
         mask_np = mask_np.astype(np.float32)
 
         # 归一化到 [0,1]（若原本是0/255或其他范围）
-        mmax = float(mask_np.max()) if mask_np.size > 0 else 1.0
-        if mmax > 0:
-            # 常见情况：0/255、0/1、或任意正数范围
-            if mmax > 1.5:  # 粗略判断 0-255 等
-                mask_np = mask_np / mmax
+        # mmax = float(mask_np.max()) if mask_np.size > 0 else 1.0
+        # if mmax > 0:
+        #     # 常见情况：0/255、0/1、或任意正数范围
+        #     if mmax > 1.5:  # 粗略判断 0-255 等
+        #         mask_np = mask_np / mmax
         mask_t = torch.from_numpy(mask_np).float()
-        if mask_t.ndim == 2:
-            mask_t = mask_t.unsqueeze(0)  # [1,h,w]
+        # if mask_t.ndim == 2:
+        #     mask_t = mask_t.unsqueeze(0)  # [1,h,w]
 
         # 尺寸对齐：与图像一致
         H, W = img_t.shape[1], img_t.shape[2]

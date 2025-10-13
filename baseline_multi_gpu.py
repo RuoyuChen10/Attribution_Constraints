@@ -140,7 +140,7 @@ def evaluate(model, dataloader, device, idx_to_label, templates):
 
     return top1/n, top2/n
 
-def train_one_epoch(model, optimizer, scaler, loader, device, tokenizer, idx_to_label, args, epoch):
+def train_one_epoch(model, optimizer, scaler, loader, device, tokenizer, idx_to_label, args, epoch, text_feats):
     model.train()
     ce = nn.CrossEntropyLoss()
     templates = ["a photo of a {name}."]
@@ -148,14 +148,19 @@ def train_one_epoch(model, optimizer, scaler, loader, device, tokenizer, idx_to_
 
     for images, labels in pbar:
         images, labels = images.to(device), labels.to(device)
-        texts = build_texts(labels, idx_to_label, templates)
-        tokens = tokenizer(texts, padding=True, truncation=True, return_tensors="pt").to(device)
+        # texts = build_texts(labels, idx_to_label, templates)
+        # tokens = tokenizer(texts, padding=True, truncation=True, return_tensors="pt").to(device)
 
         with torch.autocast("cuda", enabled=args.amp):
-            out = model(pixel_values=images, input_ids=tokens["input_ids"], attention_mask=tokens["attention_mask"])
-            loss_i2t = ce(out.logits_per_image, torch.arange(len(images), device=device))
-            loss_t2i = ce(out.logits_per_text, torch.arange(len(images), device=device))
-            loss = 0.5 * (loss_i2t + loss_t2i)
+            # out = model(pixel_values=images, input_ids=tokens["input_ids"], attention_mask=tokens["attention_mask"])
+            # loss_i2t = ce(out.logits_per_image, torch.arange(len(images), device=device))
+            # loss_t2i = ce(out.logits_per_text, torch.arange(len(images), device=device))
+            # loss = 0.5 * (loss_i2t + loss_t2i)
+            img_feats = model.get_image_features(pixel_values=images)  # [B, D]
+            img_feats = img_feats / img_feats.norm(dim=-1, keepdim=True)
+            scale = model.logit_scale.exp()
+            logits = (img_feats @ text_feats) * scale
+            loss = ce(logits, labels)
 
         scaler.scale(loss).backward()
         scaler.step(optimizer)
@@ -216,6 +221,22 @@ def main_worker():
                 param.requires_grad = False
     # full 就不用改
     model.logit_scale.requires_grad = False
+    
+    # 评测
+    tokenizer = AutoTokenizer.from_pretrained("openai/clip-vit-large-patch14")
+    templates = [
+        "a photo of a {name}.",
+    ]
+    # 构建文本特征
+    classnames = [idx_to_label[i] for i in range(len(idx_to_label))]
+    feats = []
+    for cname in classnames:
+        texts = [tmp.format(name=cname) for tmp in templates]
+        tokens = tokenizer(texts, padding=True, truncation=True, return_tensors="pt").to(device)
+        out = model.get_text_features(**tokens)
+        out = out / out.norm(dim=-1, keepdim=True)
+        feats.append(out.mean(dim=0))
+    text_feats = torch.stack(feats, dim=1).detach()  # [D,C] [768, 20]
 
     if args.world_size > 1:
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.local_rank])
@@ -229,7 +250,7 @@ def main_worker():
 
     for epoch in range(1, args.epochs+1):
         if train_sampler: train_sampler.set_epoch(epoch)
-        train_one_epoch(model, optimizer, scaler, train_loader, device, tokenizer, idx_to_label, args, epoch)
+        train_one_epoch(model, optimizer, scaler, train_loader, device, tokenizer, idx_to_label, args, epoch, text_feats)
 
         # 评测
         eval_model = model.module if isinstance(model, torch.nn.parallel.DistributedDataParallel) else model

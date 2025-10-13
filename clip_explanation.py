@@ -76,14 +76,14 @@ class CLIPAdaptor():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--test_txt", type=str, default="test.txt")
-    parser.add_argument("--ckpt", default="ckpts_clip_L14/best_epoch2.pt", type=str, help="训练好的模型权重 .pt")
+    parser.add_argument("--ckpt", default=None, type=str, help="训练好的模型权重 .pt")
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--num_workers", type=int, default=8)
     parser.add_argument('--division-number', 
-                        type=int, default=64,
+                        type=int, default=50,
                         help='')
     parser.add_argument('--save-dir', 
-                        type=str, default='./interpretation_results/CLIP-ft/',
+                        type=str, default='./interpretation_results/CLIP-baseline-50/',
                         help='output directory to save results')
     args = parser.parse_args()
 
