@@ -82,3 +82,56 @@ def norm_image(image):
     image /= np.max(image)
     image *= 255.
     return np.uint8(image)
+
+def overlay_mask_with_white_edge(img, gt_mask, alpha=0.2, edge_thickness=1, edge_blur=0, rgb=True):
+    """
+    img:             可视化图 (H,W,3) 或 (H,W)，uint8，RGB(默认) 或 BGR（rgb=False）
+    gt_mask:         二值/布尔 mask，(H,W)，>0 视为 True
+    alpha:           填充透明度，0~1，越大越白
+    edge_thickness:  白色边线粗细（像素）
+    edge_blur:       边缘柔化半径（像素，偶数会自动+1），0 表示不柔化
+    rgb:             True 表示 img 是 RGB；若你的图是 BGR（OpenCV常见），设为 False
+    """
+    # 统一成三通道 uint8
+    if img.ndim == 2:
+        img_color = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB if rgb else cv2.COLOR_GRAY2BGR)
+    else:
+        img_color = img.copy()
+        if not rgb:
+            # 内部统一按 RGB 计算，最后再换回
+            img_color = cv2.cvtColor(img_color, cv2.COLOR_BGR2RGB)
+
+    h, w = img_color.shape[:2]
+    mask = (gt_mask > 0).astype(np.uint8)
+    mask_3 = np.repeat(mask[:, :, None], 3, axis=2)
+
+    # --- 1) 半透明白色覆盖（仅在 mask 内生效的局部 alpha 混合） ---
+    img_float = img_color.astype(np.float32)
+    white = np.full_like(img_float, 255, dtype=np.float32)
+    # per-pixel alpha：mask 区域 alpha，其它地方 0
+    a = (alpha * mask_3).astype(np.float32)
+    blended = img_float * (1.0 - a) + white * a
+    out = blended.astype(np.uint8)
+
+    # --- 2) 取边界并画白线 ---
+    # 方法A：形态学梯度，稳定且快
+    k = 1 if edge_thickness <= 0 else edge_thickness
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2*k+1, 2*k+1))
+    edge = cv2.morphologyEx(mask, cv2.MORPH_GRADIENT, kernel)  # 0/1 边界
+
+    # 可选：轻微柔化边缘遮罩，避免锯齿
+    if edge_blur and edge_blur > 0:
+        r = edge_blur + (edge_blur % 2 == 0)  # 保证为奇数
+        edge = cv2.GaussianBlur(edge.astype(np.float32), (r, r), 0)
+        edge = np.clip(edge, 0, 1)
+    else:
+        edge = edge.astype(np.float32)
+
+    edge_3 = np.repeat(edge[:, :, None], 3, axis=2)
+    # 白线直接叠加：把边界像素推向白色；edge 是 0~1，越接近 1 越白
+    out = (out.astype(np.float32) * (1.0 - edge_3) + 255.0 * edge_3).astype(np.uint8)
+
+    # 如原图是 BGR，需要转回以便直接用 cv2.imshow
+    if not rgb:
+        out = cv2.cvtColor(out, cv2.COLOR_RGB2BGR)
+    return out

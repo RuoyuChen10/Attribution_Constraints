@@ -19,6 +19,7 @@ class BlackBoxSingleModalCounterfactualSubModularExplanation(object):
                  lambda1 = 20.0,    # consistency
                  lambda2 = 5.0,     # colla.
                  batch_size = 32,
+                 softmax=False,
                  device = "cuda"):
         
         self.model = model
@@ -27,6 +28,7 @@ class BlackBoxSingleModalCounterfactualSubModularExplanation(object):
         self.lambda2 = lambda2
         
         self.device = device
+        self.softmax = softmax
 
         self.batch_size = batch_size
 
@@ -37,6 +39,8 @@ class BlackBoxSingleModalCounterfactualSubModularExplanation(object):
         """
         with torch.no_grad(): 
             self.predicted_scores = self.model(batch_input_images)
+            if self.softmax:
+                self.predicted_scores = F.softmax(self.predicted_scores, dim=1)
             consistency_scores = self.predicted_scores[:, self.target_label]
         return consistency_scores
 
