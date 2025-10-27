@@ -10,6 +10,13 @@ conda create -n vea python=3.10
 
 Experiments on `Saliency Bench` dataset
 
+
+## Vision Model
+
+We validate our work on human prior alignment using the [Saliency-Bench](https://xaidataset.github.io/) dataset.
+
+**Experiments Results:**
+
 |Model|Human Prior|Method|Top-1 Accuracy|Top-2 Accuracy|Point Game@0.2|
 |:--:|:--:|:--:|:--:|:--:|:--:|
 |CLIP|Mask|Zero-shot|0.6574|0.7847|0.5440|
@@ -20,5 +27,12 @@ Experiments on `Saliency Bench` dataset
 | |  | Ours v3 | 0.5787 | 0.7650 | 0.4988 |
 | ResNet-101 | Mask | Fine-tuning| 0.3866 | 0.5880 | 0.4838 |
 | |  | Ours v3 | 0.4965 | 0.7014 | 0.5231 |
+
+**Visualizations:**
+
+|Models| Fine-tuning | Human Alignment |
+|:--:|:--:|:--:|
+|ViT| ![](examples/vit_ft_2007_001288.png) | ![](examples/vit_ours_2007_001288.png) |
+|ViT| ![](examples/vit_ft_2007_004627.png) | ![](examples/vit_ours_2007_004627.png) |
 
 torchrun --nproc_per_node=4 train_clip_ddp.py --train_scope proj
