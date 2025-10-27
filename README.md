@@ -18,7 +18,7 @@ Experiments on `Saliency Bench` dataset
 |ViT base | Mask | Fine-tuning| 0.5440 | 0.7558 | 0.4363 |
 | |  | Ours v2 | 0.5359 | 0.7512 | 0.4838 |
 | |  | Ours v3 | 0.5787 | 0.7650 | 0.4988 |
-| ResNet-101 | Mask | Fine-tuning| 0.3866 | 0.5880 | |
-| |  | Ours v3 | 0.4965 | 0.7014 | |
+| ResNet-101 | Mask | Fine-tuning| 0.3866 | 0.5880 | 0.4838 |
+| |  | Ours v3 | 0.4965 | 0.7014 | 0.5231 |
 
 torchrun --nproc_per_node=4 train_clip_ddp.py --train_scope proj
