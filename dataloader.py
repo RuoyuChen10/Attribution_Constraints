@@ -143,3 +143,128 @@ def make_dataloaders(
         test_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True, drop_last=False
     )
     return train_loader, test_loader, train_ds, test_ds, label_to_idx
+
+
+
+
+
+class ImageNetSDataset(Dataset):
+    """
+    读取 ImageNet-S:
+      txt 每行: <image_path> <mask_png_path> <label_name>
+
+    返回:
+      image: FloatTensor [3, H, W]
+      mask:  FloatTensor [1, H, W]   (0/1)
+      label: LongTensor ()
+    """
+    def __init__(
+        self,
+        list_file: str,
+        label_to_idx: Dict[str, int],
+        target_size: Tuple[int, int] = (224, 224),
+        image_mean: Tuple[float, float, float] = (0.48145466, 0.4578275, 0.40821073),
+        image_std: Tuple[float, float, float] = (0.26862954, 0.26130258, 0.27577711),
+        normalize_image: bool = True,
+    ):
+        super().__init__()
+        self.items = read_list_file(list_file)
+        self.label_to_idx = label_to_idx
+        self.target_size = target_size
+
+        # image transform
+        tfs = [
+            transforms.Resize(target_size, interpolation=InterpolationMode.BILINEAR),
+            transforms.ToTensor(),  # [0,1]
+        ]
+        if normalize_image:
+            tfs.append(transforms.Normalize(mean=image_mean, std=image_std))
+        self.img_tf = transforms.Compose(tfs)
+
+        # mask resize（只做 resize，不 ToTensor）
+        self.mask_resize = transforms.Resize(
+            target_size, interpolation=InterpolationMode.NEAREST
+        )
+
+    def __len__(self):
+        return len(self.items)
+
+    def _load_mask(self, mask_path: str) -> torch.Tensor:
+        """
+        Load PNG mask and convert to [1, H, W] float tensor in {0,1}
+        """
+        # ImageNet-S mask 可能是 P / RGB / L
+        mask = Image.open(mask_path)
+
+        # 转成灰度，保证单通道
+        mask = mask.convert("L")  # [H, W], 0-255
+
+        # resize（nearest，保证离散性）
+        mask = self.mask_resize(mask)
+
+        # -> tensor
+        mask_t = transforms.functional.to_tensor(mask)  # [1, H, W], 0-1
+
+        # 二值化（非常重要）
+        mask_t = (mask_t > 0).float()
+
+        return mask_t
+
+    def __getitem__(self, idx):
+        img_path, mask_path, label_name = self.items[idx]
+
+        # --- image ---
+        img = Image.open(img_path).convert("RGB")
+        img_t = self.img_tf(img)  # [3,H,W]
+
+        # --- mask ---
+        mask_t = self._load_mask(mask_path)  # [1,H,W]
+
+        # --- label ---
+        label = torch.tensor(
+            self.label_to_idx[label_name], dtype=torch.long
+        )
+
+        return img_t, mask_t, label, img_path, mask_path
+    
+def make_imagenet_s_dataloaders(
+    train_txt: str,
+    val_txt: str,
+    batch_size: int = 32,
+    num_workers: int = 8,
+    target_size: Tuple[int, int] = (224, 224),
+    normalize_image: bool = True,
+):
+    label_to_idx = build_label_map(train_txt, val_txt)
+
+    train_ds = ImageNetSDataset(
+        list_file=train_txt,
+        label_to_idx=label_to_idx,
+        target_size=target_size,
+        normalize_image=normalize_image,
+    )
+    val_ds = ImageNetSDataset(
+        list_file=val_txt,
+        label_to_idx=label_to_idx,
+        target_size=target_size,
+        normalize_image=normalize_image,
+    )
+
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=True,
+        drop_last=False,
+    )
+    val_loader = DataLoader(
+        val_ds,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=True,
+        drop_last=False,
+    )
+
+    return train_loader, val_loader, train_ds, val_ds, label_to_idx

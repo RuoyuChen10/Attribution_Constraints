@@ -176,8 +176,8 @@ def train_one_epoch(model, optimizer, scaler, loader, device, tokenizer, idx_to_
 # -------------------
 def main_worker():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--train_txt", default="train.txt")
-    parser.add_argument("--test_txt", default="test.txt")
+    parser.add_argument("--train_txt", default="data_list/saliency-bench/train.txt")
+    parser.add_argument("--test_txt", default="data_list/saliency-bench/test.txt")
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--num_workers", type=int, default=8)

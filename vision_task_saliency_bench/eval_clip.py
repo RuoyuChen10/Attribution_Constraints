@@ -39,6 +39,33 @@ def build_label_map(list_file: str):
     labels = sorted(list(set(labels)))
     return {lab: i for i, lab in enumerate(labels)}
 
+class AddRandomNoise(object):
+    def __init__(self, noise_type='gaussian', mean=0.0, std=0.05, scale=0.05):
+        """
+        noise_type: 'gaussian' 或 'uniform'
+        mean/std: 高斯噪声参数
+        scale: 均匀噪声幅度 [-scale, scale]
+        """
+        self.noise_type = noise_type
+        self.mean = mean
+        self.std = std
+        self.scale = scale
+
+    def __call__(self, tensor):
+        if self.noise_type == 'gaussian':
+            noise = torch.randn_like(tensor) * self.std + self.mean
+        elif self.noise_type == 'uniform':
+            noise = (torch.rand_like(tensor) - 0.5) * 2 * self.scale
+        else:
+            raise ValueError(f"Unsupported noise type: {self.noise_type}")
+        tensor = tensor + noise
+        tensor = torch.clamp(tensor, 0.0, 1.0)  # 保证像素范围不越界
+        return tensor
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}(type={self.noise_type}, std={self.std}, scale={self.scale})"
+
+
 class PascalSaliencyDataset(Dataset):
     def __init__(self, list_file, label_to_idx, target_size=(224,224),
                  mean=OPENAI_CLIP_MEAN, std=OPENAI_CLIP_STD):
@@ -47,6 +74,7 @@ class PascalSaliencyDataset(Dataset):
         self.img_tf = transforms.Compose([
             transforms.Resize(target_size, interpolation=InterpolationMode.BICUBIC),
             transforms.ToTensor(),
+            # AddRandomNoise(noise_type='gaussian', std=0.2),  # 随机噪声层
             transforms.Normalize(mean=mean, std=std),
         ])
 
@@ -152,7 +180,7 @@ def safe_load_state_dict(model, ckpt_path, map_location="cpu", verbose=True):
 # -------------------
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--test_txt", type=str, default="test.txt")
+    parser.add_argument("--test_txt", type=str, default="data_list/saliency-bench/test.txt")
     parser.add_argument("--ckpt", default=None, type=str, help="训练好的模型权重 .pt")
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--num_workers", type=int, default=8)
