@@ -140,16 +140,16 @@ def build_resnet101(num_classes: int, freeze_backbone: bool = False):
 # -------------------
 def main_worker():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--train_txt", default="train.txt")
-    parser.add_argument("--test_txt", default="test.txt")
+    parser.add_argument("--train_txt", default="data_list/imagenet-s919/train.txt")
+    parser.add_argument("--test_txt", default="data_list/imagenet-s919/test.txt")
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--num_workers", type=int, default=8)
-    parser.add_argument("--lr", type=float, default=1e-3)           # ResNet 头/全量较常见起点
+    parser.add_argument("--lr", type=float, default=1e-4)           # ResNet 头/全量较常见起点
     parser.add_argument("--weight_decay", type=float, default=0.05)
     parser.add_argument("--amp", action="store_true", default=True)
-    parser.add_argument("--output_dir", default="./ckpts_resnet101_imnet")
-    parser.add_argument("--num_classes", type=int, default=20, help="默认 20 类；若与数据不一致将以数据集为准")
+    parser.add_argument("--output_dir", default="./ckpt_vision_imagenets/ckpts_resnet101_imnet")
+    parser.add_argument("--num_classes", type=int, default=918, help="默认 20 类；若与数据不一致将以数据集为准")
     parser.add_argument("--train_scope", type=str, default="full",
                         choices=["full", "head"], help="full=全量微调；head=仅分类头")
     args = parser.parse_args()
@@ -185,8 +185,8 @@ def main_worker():
         transforms.Normalize(mean=mean, std=std),
     ])
     test_tf = transforms.Compose([
-        transforms.Resize(256, interpolation=InterpolationMode.BILINEAR),
-        transforms.CenterCrop(224),
+        transforms.Resize((224,224), interpolation=InterpolationMode.BILINEAR),
+        # transforms.CenterCrop(224),
         transforms.ToTensor(),
         transforms.Normalize(mean=mean, std=std),
     ])
@@ -227,8 +227,8 @@ def main_worker():
         top1, top2 = evaluate(eval_model, test_loader, device)
         if is_main_process():
             print(f"[Eval] Epoch {epoch}: top1={top1:.4f}, top2={top2:.4f}")
-            if top2 > best_top2:
-                best_top2 = top2
+            if top1 > best_top2:
+                best_top2 = top1
                 torch.save(eval_model.state_dict(), os.path.join(args.output_dir, f"best_epoch{epoch}.pt"))
 
     cleanup_distributed()

@@ -2,6 +2,7 @@ import os
 from typing import Optional, Tuple, Dict, List
 import numpy as np
 from PIL import Image
+import cv2
 
 import torch
 from torch.utils.data import Dataset, DataLoader
@@ -206,7 +207,7 @@ class ImageNetSDataset(Dataset):
         mask_t = transforms.functional.to_tensor(mask)  # [1, H, W], 0-1
 
         # 二值化（非常重要）
-        mask_t = (mask_t > 0).float()
+        mask_t = (mask_t[0] > 0).float()
 
         return mask_t
 
@@ -218,7 +219,7 @@ class ImageNetSDataset(Dataset):
         img_t = self.img_tf(img)  # [3,H,W]
 
         # --- mask ---
-        mask_t = self._load_mask(mask_path)  # [1,H,W]
+        mask_t = self._load_mask(mask_path)  # [H,W]
 
         # --- label ---
         label = torch.tensor(
