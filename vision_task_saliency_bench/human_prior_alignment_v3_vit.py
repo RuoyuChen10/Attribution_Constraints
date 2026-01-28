@@ -283,10 +283,10 @@ def train_one_epoch(model, optimizer, scaler, loader, device, args, epoch, human
                 print(" —— REDUNDANCY loss —— ", loss_redundancy.item())
                 loss_all = loss_all + 0.5 * loss_redundancy
 
-            scaler.scale(loss_all).backward()
-            scaler.step(optimizer)
-            scaler.update()
-            optimizer.zero_grad(set_to_none=True)
+        scaler.scale(loss_all).backward()
+        scaler.step(optimizer)
+        scaler.update()
+        optimizer.zero_grad(set_to_none=True)
             
         aug_step_count += 1
         

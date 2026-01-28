@@ -75,7 +75,7 @@ class CLIPAdaptor():
 # -------------------
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--test_txt", type=str, default="data_list/saliency-bench/test.txt")
+    parser.add_argument("--test_txt", type=str, default="data_list/imagenet-s919/test_one_per_class.txt")
     parser.add_argument("--ckpt", default=None, type=str, help="训练好的模型权重 .pt")
     parser.add_argument("--batch_size", type=int, default=50)
     parser.add_argument("--num_workers", type=int, default=8)
@@ -153,7 +153,7 @@ def main():
         img_path, mask_path, label_name = item
         label = label_to_idx[label_name]
 
-        image = cv2.imread(img_path)
+        image = cv2.resize(cv2.imread(img_path), (224,224))
         
         image_tensor = img_tf(Image.open(img_path).convert("RGB")).to(device)
     

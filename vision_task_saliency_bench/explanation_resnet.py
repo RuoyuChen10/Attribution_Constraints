@@ -115,7 +115,7 @@ def load_checkpoint_flex(model: nn.Module, ckpt_path: str, map_location="cpu", s
 # -------------------
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--test_txt", type=str, default="test.txt")
+    parser.add_argument("--test_txt", type=str, default="data_list/saliency-bench/test.txt")
     parser.add_argument("--ckpt", default=None, type=str, help="训练好的模型权重 .pt")
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--num_workers", type=int, default=8)

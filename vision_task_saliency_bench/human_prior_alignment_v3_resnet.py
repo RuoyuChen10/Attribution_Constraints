@@ -324,7 +324,7 @@ def main_worker():
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--weight_decay", type=float, default=0.05)
     parser.add_argument("--amp", action="store_true", default=True)
-    parser.add_argument("--output_dir", default="./ckpts_resnet_b16_imnet_human_prior_v3/")
+    parser.add_argument("--output_dir", default="./ckpt_vision_saliency_bench/ckpts_resnet_b16_imnet_human_prior_v3/")
     parser.add_argument("--num_classes", type=int, default=20, help="默认训练 20 类；若与数据集不一致将以数据集为准")
     parser.add_argument("--train_scope", type=str, default="full",
                         choices=["full", "head"],
