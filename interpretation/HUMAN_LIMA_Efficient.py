@@ -41,7 +41,7 @@ class HumanLIMA(object):
         
         self.softmax = softmax
         
-        self.k = 10
+        self.k = 5
         
         self.search_scope = search_scope
         self.update_step = update_step

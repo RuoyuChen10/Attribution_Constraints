@@ -322,8 +322,8 @@ def build_vit_model(num_classes: int, freeze_backbone: bool = False):
 # -------------------
 def main_worker():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--train_txt", default="train.txt")
-    parser.add_argument("--test_txt", default="test.txt")
+    parser.add_argument("--train_txt", default="data_list/saliency-bench/train.txt")
+    parser.add_argument("--test_txt", default="data_list/saliency-bench/test.txt")
     parser.add_argument("--epochs", type=int, default=20)
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--num_workers", type=int, default=8)

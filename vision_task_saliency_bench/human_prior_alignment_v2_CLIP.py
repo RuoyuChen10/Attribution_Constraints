@@ -18,7 +18,7 @@ from transformers import CLIPModel, AutoTokenizer
 from tqdm import tqdm
 
 from dataloader import PascalSaliencyDataset, make_dataloaders
-from interpretation.HUMAN_LIMA import HumanLIMA
+from interpretation.HUMAN_LIMA_Efficient import HumanLIMA
 from utils import mkdir, SubRegionDivision
 
 # 关闭 tokenizer 并行提示
@@ -292,11 +292,6 @@ def train_one_epoch(model, optimizer, scaler, loader, device, tokenizer, idx_to_
 
                     loss_human = gt_ins.mean() + (1 - gt_del).mean()
                     loss_all = loss_all + 0.5 * loss_human
-
-            scaler.scale(loss_all).backward()
-            scaler.step(optimizer)
-            scaler.update()
-            optimizer.zero_grad(set_to_none=True)
             
             print(" —— HUMAN loss —— ", loss_human.item())
 
@@ -369,6 +364,10 @@ def train_one_epoch(model, optimizer, scaler, loader, device, tokenizer, idx_to_
             #     loss_redundancy_avg = loss_redundancy_total / nb
                  
             #     print(" —— REDUNDANCY loss —— ", loss_redundancy_avg)
+        scaler.scale(loss_all).backward()
+        scaler.step(optimizer)
+        scaler.update()
+        optimizer.zero_grad(set_to_none=True)
 
         aug_step_count += 1
 
@@ -377,10 +376,10 @@ def train_one_epoch(model, optimizer, scaler, loader, device, tokenizer, idx_to_
 # -------------------
 def main_worker():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--train_txt", default="train.txt")
-    parser.add_argument("--test_txt", default="test.txt")
+    parser.add_argument("--train_txt", default="data_list/saliency-bench/train.txt")
+    parser.add_argument("--test_txt", default="data_list/saliency-bench/test.txt")
     parser.add_argument("--epochs", type=int, default=10)
-    parser.add_argument("--batch_size", type=int, default=16)
+    parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--num_workers", type=int, default=8)
     parser.add_argument("--align_steps", type=int, default=5)
     parser.add_argument("--division_number", type=int, default=50)

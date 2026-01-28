@@ -107,15 +107,15 @@ def load_checkpoint_flex(model: nn.Module, ckpt_path: str, map_location="cpu"):
 # -------------------
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--test_txt", type=str, default="test.txt")
-    parser.add_argument("--ckpt", default=None, type=str, help="训练好的模型权重 .pt")
-    parser.add_argument("--batch_size", type=int, default=16)
+    parser.add_argument("--test_txt", type=str, default="data_list/saliency-bench/test.txt")
+    parser.add_argument("--ckpt", default="ckpt_vision_saliency_bench/ckpts_vit_b16_imnet_RRR/best_epoch1.pt", type=str, help="训练好的模型权重 .pt")
+    parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--num_workers", type=int, default=8)
     parser.add_argument('--division-number', 
                         type=int, default=50,
                         help='')
     parser.add_argument('--save-dir', 
-                        type=str, default='./ckpts_vit_b16_imnet_human_prior_v3_detach/best_epoch3/',
+                        type=str, default='./ckpt_vision_saliency_bench/ckpts_vit_b16_imnet_RRR/best_epoch1/',
                         help='output directory to save results')
     args = parser.parse_args()
     

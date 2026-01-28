@@ -18,7 +18,7 @@ from PIL import Image
 from tqdm import tqdm
 
 from dataloader import PascalSaliencyDataset, make_dataloaders
-from interpretation.HUMAN_LIMA import HumanLIMA
+from interpretation.HUMAN_LIMA_Efficient import HumanLIMA
 from utils import mkdir, SubRegionDivision
 
 # -------------------
@@ -283,10 +283,10 @@ def train_one_epoch(model, optimizer, scaler, loader, device, args, epoch, human
                 print(" —— REDUNDANCY loss —— ", loss_redundancy.item())
                 loss_all = loss_all + 0.5 * loss_redundancy
 
-            scaler.scale(loss_all).backward()
-            scaler.step(optimizer)
-            scaler.update()
-            optimizer.zero_grad(set_to_none=True)
+        scaler.scale(loss_all).backward()
+        scaler.step(optimizer)
+        scaler.update()
+        optimizer.zero_grad(set_to_none=True)
             
         aug_step_count += 1
         
@@ -313,12 +313,12 @@ def build_resnet101(num_classes: int, freeze_backbone: bool = False):
 # -------------------
 def main_worker():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--train_txt", default="train.txt")
-    parser.add_argument("--test_txt", default="test.txt")
+    parser.add_argument("--train_txt", default="data_list/saliency-bench/train.txt")
+    parser.add_argument("--test_txt", default="data_list/saliency-bench/test.txt")
     parser.add_argument("--epochs", type=int, default=10)
-    parser.add_argument("--batch_size", type=int, default=32)
+    parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--num_workers", type=int, default=8)
-    parser.add_argument("--align_steps", type=int, default=5)
+    parser.add_argument("--align_steps", type=int, default=10)
     parser.add_argument("--division_number", type=int, default=50)
     parser.add_argument("--threshold", type=float, default=0.75)
     parser.add_argument("--lr", type=float, default=1e-4)
