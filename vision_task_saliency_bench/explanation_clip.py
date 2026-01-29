@@ -90,7 +90,7 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # 数据集
-    label_to_idx = build_label_map(args.test_txt)
+    label_to_idx = build_label_map("data_list/saliency-bench/test.txt")
     idx_to_label = {v:k for k,v in label_to_idx.items()}
 
     # 模型

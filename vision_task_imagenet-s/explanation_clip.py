@@ -165,13 +165,13 @@ def main():
         
         # Save npy file
         np.save(
-            os.path.join(save_npy_root_path, img_path.split("/")[-1].replace(".png", ".npy")),
+            os.path.join(save_npy_root_path, img_path.split("/")[-1].replace(".JPEG", ".npy")),
             np.array(S_set)
         )
         
         # Save json file
         with open(
-            os.path.join(save_json_root_path, img_path.split("/")[-1].replace(".png", ".json")), "w") as f:
+            os.path.join(save_json_root_path, img_path.split("/")[-1].replace(".JPEG", ".json")), "w") as f:
             f.write(json.dumps(saved_json_file, ensure_ascii=False, indent=4, separators=(',', ':')))
     
 

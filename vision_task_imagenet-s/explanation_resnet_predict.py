@@ -12,7 +12,7 @@ from torchvision import transforms
 from torchvision.transforms import InterpolationMode
 from transformers import CLIPModel, AutoTokenizer
 from tqdm import tqdm
-from torchvision.models import vit_b_16, ViT_B_16_Weights
+from torchvision.models import resnet101, ResNet101_Weights
 
 from interpretation.LIMA import BlackBoxSingleModalCounterfactualSubModularExplanation
 from utils import mkdir, SubRegionDivision
@@ -44,78 +44,86 @@ def build_label_map(*list_files: str):
 
 
 # -------------------
-# 构建 ViT 模型（ImageNet 预训练）并替换分类头
+# 构建 ResNet-101（ImageNet 预训练）并替换分类头
 # -------------------
-def build_vit_model(num_classes: int, freeze_backbone: bool = False):
-    weights = ViT_B_16_Weights.IMAGENET1K_V1  # ImageNet 预训练
-    model = vit_b_16(weights=weights)
-    # 兼容不同 torchvision 版本的分类头写法
-    in_features = None
-    if hasattr(model, "heads") and hasattr(model.heads, "head") and isinstance(model.heads.head, nn.Linear):
-        in_features = model.heads.head.in_features
-    elif hasattr(model, "heads") and isinstance(model.heads, nn.Sequential) and len(model.heads) > 0 and isinstance(model.heads[0], nn.Linear):
-        in_features = model.heads[0].in_features
-    elif hasattr(model, "hidden_dim"):
-        in_features = model.hidden_dim
-    else:
-        # 兜底（ViT-B/16 默认 768）
-        in_features = 768
-    model.heads = nn.Linear(in_features, num_classes)
+def build_resnet101(num_classes: int, freeze_backbone: bool = False):
+    weights = ResNet101_Weights.IMAGENET1K_V2  # 更强的 ImageNet1K V2 预训练
+    model = resnet101(weights=weights)
+
+    # 替换分类头
+    in_features = model.fc.in_features
+    model.fc = nn.Linear(in_features, num_classes)
 
     if freeze_backbone:
         for name, p in model.named_parameters():
-            # 仅训练 heads
-            if "heads" not in name:
+            if not name.startswith("fc."):
                 p.requires_grad = False
 
     return model, weights
 
-def load_checkpoint_flex(model: nn.Module, ckpt_path: str, map_location="cpu"):
+def load_checkpoint_flex(model: nn.Module, ckpt_path: str, map_location="cpu", strict=False):
     print(f"[Info] Loading checkpoint: {ckpt_path}")
     state = torch.load(ckpt_path, map_location=map_location)
-    # 常见几种保存方式的兼容
+
+    # 取出真正的 state_dict
     if isinstance(state, dict):
-        if "model" in state and isinstance(state["model"], dict):
-            state_dict = state["model"]
-        elif "state_dict" in state and isinstance(state["state_dict"], dict):
-            state_dict = state["state_dict"]
-        else:
-            state_dict = state
-    else:
-        state_dict = state
+        for k in ("model", "state_dict", "net", "ema"):
+            if k in state and isinstance(state[k], dict):
+                state = state[k]
+                break
 
-    # 兼容DDP保存的 'module.' 前缀
+    if not isinstance(state, dict):
+        raise TypeError(f"Loaded object is not a dict: {type(state)}")
+
+    # 仅在存在前缀时剥离；不要无差别 k[7:]
+    prefixes = ("module.", "model.", "backbone.", "encoder.")
     new_state = {}
-    for k, v in state_dict.items():
-        if k.startswith("module."):
-            new_state[k[len("module."):]] = v
-        else:
-            new_state[k] = v
+    for k, v in state.items():
+        nk = k
+        for p in prefixes:
+            if nk.startswith(p):
+                nk = nk[len(p):]
+        new_state[nk] = v  # 只赋值一次
 
-    # 尝试严格加载；若失败，改为非严格加载并提示
+    # 可选：检测是否曾经被错误切片过的残留（避免老代码遗留）
+    bad_fragments = {"eight","ght","ht","s","ning_mean","ning_var","_batches_tracked",""}
+    leaked = [k for k in new_state.keys() if k in bad_fragments]
+    if leaked:
+        print(f"[Warn] Found suspicious truncated keys (likely from old buggy slicing): {leaked[:8]} ...")
+
+    # 统计可匹配率（shape也要对）
+    model_sd = model.state_dict()
+    hit = sum(1 for k, v in new_state.items() if k in model_sd and model_sd[k].shape == v.shape)
+    total = len(new_state)
+    print(f"[Info] Key+shape match: {hit}/{total} ({100.0*hit/max(1,total):.1f}%)")
+
     try:
-        model.load_state_dict(new_state, strict=True)
-        print("[Info] Loaded with strict=True")
+        missing, unexpected = model.load_state_dict(new_state, strict=strict)
+        if strict:
+            print("[Info] Loaded with strict=True")
+        else:
+            print(f"[Warn] Missing keys: {missing}")
+            print(f"[Warn] Unexpected keys: {unexpected}")
     except Exception as e:
-        print(f"[Warn] Strict load failed ({e}); trying strict=False")
+        print(f"[Warn] strict={strict} load failed: {e}")
         missing, unexpected = model.load_state_dict(new_state, strict=False)
-        print(f"[Warn] Missing keys: {missing}")
-        print(f"[Warn] Unexpected keys: {unexpected}")
+        print(f"[Warn] Fallback strict=False. Missing: {missing}")
+        print(f"[Warn] Unexpected: {unexpected}")
 
 # -------------------
 # main
 # -------------------
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--test_txt", type=str, default="data_list/saliency-bench/test.txt")
-    parser.add_argument("--ckpt", default="ckpt_vision_saliency_bench/ckpts_vit_b16_imnet_RRR/best_epoch1.pt", type=str, help="训练好的模型权重 .pt")
-    parser.add_argument("--batch_size", type=int, default=64)
+    parser.add_argument("--test_txt", type=str, default="data_list/imagenet-s919/test_one_per_class.txt")
+    parser.add_argument("--ckpt", default="ckpt_vision_imagenets/ckpts_resnet_b16_imnet_human_prior_v3/best_epoch5.pt", type=str, help="训练好的模型权重 .pt")
+    parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--num_workers", type=int, default=8)
     parser.add_argument('--division-number', 
                         type=int, default=50,
                         help='')
     parser.add_argument('--save-dir', 
-                        type=str, default='./ckpt_vision_saliency_bench/ckpts_vit_b16_imnet_RRR/best_epoch1/',
+                        type=str, default='./ckpt_vision_imagenets/ckpts_resnet_b16_imnet_human_prior_v3/best_epoch5/',
                         help='output directory to save results')
     args = parser.parse_args()
     
@@ -132,7 +140,7 @@ def main():
     print(f"[Info] Num classes = {num_classes}")
 
     # 模型 & 预处理
-    model, weights = build_vit_model(num_classes=num_classes)
+    model, weights = build_resnet101(num_classes=num_classes)
     model.to(device)
         
     # 加载权重
@@ -148,7 +156,7 @@ def main():
         std  = (0.26862954, 0.26130258, 0.27577711)
 
     img_tf = transforms.Compose([
-        transforms.Resize(224, interpolation=InterpolationMode.BICUBIC),
+        transforms.Resize((224,224), interpolation=InterpolationMode.BICUBIC),
         # transforms.CenterCrop(224),
         transforms.ToTensor(),
         transforms.Normalize(mean=mean, std=std),
@@ -178,7 +186,7 @@ def main():
         img_path, mask_path, label_name = item
         label = label_to_idx[label_name]
 
-        image = cv2.imread(img_path)
+        image = cv2.resize(cv2.imread(img_path),(224,224))
         
         image_tensor = img_tf(Image.open(img_path).convert("RGB")).to(device)
         
@@ -193,13 +201,13 @@ def main():
         
         # Save npy file
         np.save(
-            os.path.join(save_npy_root_path, img_path.split("/")[-1].replace(".png", ".npy")),
+            os.path.join(save_npy_root_path, img_path.split("/")[-1].replace(".JPEG", ".npy")),
             np.array(S_set)
         )
         
         # Save json file
         with open(
-            os.path.join(save_json_root_path, img_path.split("/")[-1].replace(".png", ".json")), "w") as f:
+            os.path.join(save_json_root_path, img_path.split("/")[-1].replace(".JPEG", ".json")), "w") as f:
             f.write(json.dumps(saved_json_file, ensure_ascii=False, indent=4, separators=(',', ':')))
     
 

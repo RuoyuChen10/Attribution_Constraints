@@ -54,11 +54,15 @@ def main(args):
         
     for img_path, mask_path, label in tqdm(items):
         # Load mask
-        gt_mask = np.load(mask_path)
+        if ".npy" in mask_path:
+            gt_mask = np.load(mask_path)
+        elif ".png" in mask_path:
+            gt_mask = cv2.resize(cv2.imread(mask_path), (224,224)) # np.load(mask_path)
+            gt_mask = (gt_mask.sum(-1) > 0).astype(np.uint8)
         
         # Load explanation
-        explanation_path = os.path.join(args.explanation_dir+"/npy", os.path.basename(img_path).replace('.png', '.npy'))
-        json_file_path = os.path.join(args.explanation_dir+"/json", os.path.basename(img_path).replace('.png', '.json'))
+        explanation_path = os.path.join(args.explanation_dir+"/npy", os.path.basename(img_path).replace('.png', '.npy').replace('.JPEG', '.npy'))
+        json_file_path = os.path.join(args.explanation_dir+"/json", os.path.basename(img_path).replace('.png', '.json').replace('.JPEG', '.json'))
         
         if not os.path.exists(explanation_path):
             print(f"Explanation file not found: {explanation_path}")

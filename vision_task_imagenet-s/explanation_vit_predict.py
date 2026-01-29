@@ -107,15 +107,15 @@ def load_checkpoint_flex(model: nn.Module, ckpt_path: str, map_location="cpu"):
 # -------------------
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--test_txt", type=str, default="data_list/saliency-bench/test.txt")
-    parser.add_argument("--ckpt", default="ckpt_vision_saliency_bench/ckpts_vit_b16_imnet_RRR/best_epoch1.pt", type=str, help="训练好的模型权重 .pt")
+    parser.add_argument("--test_txt", type=str, default="data_list/imagenet-s919/test_one_per_class.txt")
+    parser.add_argument("--ckpt", default="", type=str, help="训练好的模型权重 .pt")
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--num_workers", type=int, default=8)
     parser.add_argument('--division-number', 
                         type=int, default=50,
                         help='')
     parser.add_argument('--save-dir', 
-                        type=str, default='./ckpt_vision_saliency_bench/ckpts_vit_b16_imnet_RRR/best_epoch1/',
+                        type=str, default='',
                         help='output directory to save results')
     args = parser.parse_args()
     
@@ -148,7 +148,7 @@ def main():
         std  = (0.26862954, 0.26130258, 0.27577711)
 
     img_tf = transforms.Compose([
-        transforms.Resize(224, interpolation=InterpolationMode.BICUBIC),
+        transforms.Resize((224,224), interpolation=InterpolationMode.BICUBIC),
         # transforms.CenterCrop(224),
         transforms.ToTensor(),
         transforms.Normalize(mean=mean, std=std),
@@ -178,7 +178,7 @@ def main():
         img_path, mask_path, label_name = item
         label = label_to_idx[label_name]
 
-        image = cv2.imread(img_path)
+        image = cv2.resize(cv2.imread(img_path),(224,224))
         
         image_tensor = img_tf(Image.open(img_path).convert("RGB")).to(device)
         
@@ -189,17 +189,16 @@ def main():
         V_set = SubRegionDivision(image, mode="slico", region_size = region_size)
         
         S_set, saved_json_file = smdl(image_tensor, V_set, predict_label)
-        saved_json_file['predict_label'] = predict_label
         
         # Save npy file
         np.save(
-            os.path.join(save_npy_root_path, img_path.split("/")[-1].replace(".png", ".npy")),
+            os.path.join(save_npy_root_path, img_path.split("/")[-1].replace(".JPEG", ".npy")),
             np.array(S_set)
         )
         
         # Save json file
         with open(
-            os.path.join(save_json_root_path, img_path.split("/")[-1].replace(".png", ".json")), "w") as f:
+            os.path.join(save_json_root_path, img_path.split("/")[-1].replace(".JPEG", ".json")), "w") as f:
             f.write(json.dumps(saved_json_file, ensure_ascii=False, indent=4, separators=(',', ':')))
     
 
