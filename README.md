@@ -1,6 +1,11 @@
-# Attribution Alignment with Human Annotation
+# Where Not to Learn: Prior-Aligned Training with Subset-based Attribution Constraints for Reliable Decision-Making
 
-This repository studies visual attribution methods whose explanations align with human priors. It includes training, evaluation, point-game, and visualization entrypoints for Saliency-Bench and ImageNet-S919.
+Official PyTorch implementation of [*Where Not to Learn: Prior-Aligned Training with Subset-based Attribution Constraints for Reliable Decision-Making*](https://arxiv.org/abs/2602.07008).
+
+[![arXiv](https://img.shields.io/badge/arXiv-2602.07008-b31b1b.svg)](https://arxiv.org/abs/2602.07008)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+This repository studies visual attribution methods whose explanations align with human priors. It includes training, evaluation, Pointing Game, and visualization entrypoints for Saliency-Bench and ImageNet-S919.
 
 ## Setup
 
@@ -68,3 +73,16 @@ python point_game_imagenets.py
 ## License
 
 The source code is released under the [MIT License](LICENSE). Dataset licenses remain with their respective providers.
+
+## Citation
+
+If you use this code, please cite:
+
+```bibtex
+@article{chen2026where,
+  title={Where Not to Learn: Prior-Aligned Training with Subset-based Attribution Constraints for Reliable Decision-Making},
+  author={Chen, Ruoyu and Sun, Shangquan and Guo, Xiaoqing and Zhang, Sanyi and Liu, Kangwei and Liu, Shiming and Wang, Zhangcheng and Zhang, Qunli and Zhang, Hua and Cao, Xiaochun},
+  journal={arXiv preprint arXiv:2602.07008},
+  year={2026}
+}
+```
