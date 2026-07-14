@@ -163,6 +163,7 @@ def train_one_epoch(model, optimizer, scaler, loader, device, tokenizer, idx_to_
             logits = (img_feats @ text_feats) * scale
             loss_ce = ce(logits, labels)
             
+        # RRR 按论文设定使用 input gradient；Grad-ECLIP 仅用于 ViT 的 MEGL/XIL。
         # ========= 解释梯度（建议禁用 autocast，float32 更稳） =========
         # 选择“目标分数”：最常见是取 GT 类别的 logit（或 log-prob）
         logits_fp32 = logits.float()

@@ -14,7 +14,6 @@ from torch.utils.data import Dataset, DataLoader, DistributedSampler
 from torchvision import transforms
 from torchvision.transforms import InterpolationMode
 import torchvision.transforms.functional as TF
-from torchvision.models import vit_b_16, ViT_B_16_Weights
 
 import math
 
@@ -25,7 +24,7 @@ from dataloader import make_dataloaders
 # from interpretation.HUMAN_LIMA_Efficient import HumanLIMA
 from utils import SubRegionDivision
 
-from transformers import ViTForImageClassification, ViTConfig
+from vit_model import VIT_IMAGE_MEAN, VIT_IMAGE_STD, build_vit_classifier
 
 # 只保留 math kernel（最可能支持二阶导）
 torch.backends.cuda.enable_flash_sdp(False)
@@ -256,33 +255,6 @@ def train_one_epoch(model, optimizer, scaler, loader, device, args, epoch):
         
         
 # -------------------
-# 构建 ViT 模型（ImageNet 预训练）并替换分类头
-# -------------------
-def build_vit_model(num_classes: int, freeze_backbone: bool = False):
-    weights = ViT_B_16_Weights.IMAGENET1K_V1  # ImageNet 预训练
-    model = vit_b_16(weights=weights)
-    # 兼容不同 torchvision 版本的分类头写法
-    in_features = None
-    if hasattr(model, "heads") and hasattr(model.heads, "head") and isinstance(model.heads.head, nn.Linear):
-        in_features = model.heads.head.in_features
-    elif hasattr(model, "heads") and isinstance(model.heads, nn.Sequential) and len(model.heads) > 0 and isinstance(model.heads[0], nn.Linear):
-        in_features = model.heads[0].in_features
-    elif hasattr(model, "hidden_dim"):
-        in_features = model.hidden_dim
-    else:
-        # 兜底（ViT-B/16 默认 768）
-        in_features = 768
-    model.heads = nn.Linear(in_features, num_classes)
-
-    if freeze_backbone:
-        for name, p in model.named_parameters():
-            # 仅训练 heads
-            if "heads" not in name:
-                p.requires_grad = False
-
-    return model, weights
-
-# -------------------
 # main_worker
 # -------------------
 def main_worker():
@@ -315,6 +287,8 @@ def main_worker():
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         target_size=(224,224),
+        image_mean=VIT_IMAGE_MEAN,
+        image_std=VIT_IMAGE_STD,
     )
     train_sampler = DistributedSampler(train_ds) if args.world_size > 1 else None
     test_sampler  = DistributedSampler(test_ds, shuffle=False) if args.world_size > 1 else None
@@ -322,22 +296,10 @@ def main_worker():
 
     # 模型 & 预处理
     freeze_backbone = (args.train_scope == "head")
-    model = ViTForImageClassification.from_pretrained(
-        "google/vit-base-patch16-224",
-        num_labels=args.num_classes,            # 你的类别数
-        ignore_mismatched_sizes=True
+    model = build_vit_classifier(
+        num_classes=len(label_to_idx),
+        freeze_backbone=freeze_backbone,
     ).to(device)
-    model = model.to(device)
-
-    # 训练/测试增广（使用 ImageNet 均值方差）
-    # 兼容 torchvision 版本差异：旧版 weights 可能无 meta 信息
-    # if hasattr(weights, "meta") and "mean" in weights.meta:
-    #     mean = weights.meta["mean"]
-    #     std = weights.meta["std"]
-    # else:
-    #     # 默认 ImageNet 统计量
-    #     mean = (0.485, 0.456, 0.406)
-    #     std = (0.229, 0.224, 0.225)
 
     if args.world_size > 1:
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.local_rank])

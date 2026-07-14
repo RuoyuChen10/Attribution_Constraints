@@ -11,9 +11,10 @@ import torch.distributed as dist
 from torch.utils.data import Dataset, DataLoader, DistributedSampler
 from torchvision import transforms
 from torchvision.transforms import InterpolationMode
-from torchvision.models import vit_b_16, ViT_B_16_Weights
 from PIL import Image
 from tqdm import tqdm
+
+from vit_model import VIT_IMAGE_MEAN, VIT_IMAGE_STD, build_vit_classifier, vit_logits
 
 # -------------------
 # 工具函数 & 数据
@@ -114,7 +115,7 @@ def evaluate(model, dataloader, device):
     top1 = top2 = n = 0
     for images, labels in dataloader:
         images, labels = images.to(device), labels.to(device)
-        logits = model(images)  # [B, C]
+        logits = vit_logits(model, images)  # [B, C]
         # Top-1
         pred1 = logits.argmax(dim=1)
         top1 += (pred1 == labels).sum().item()
@@ -135,7 +136,7 @@ def train_one_epoch(model, optimizer, scaler, loader, device, args, epoch):
         images, labels = images.to(device), labels.to(device)
 
         with torch.autocast("cuda", enabled=args.amp):
-            logits = model(images)  # [B, C]
+            logits = vit_logits(model, images)  # [B, C]
             loss = ce(logits, labels)
 
         scaler.scale(loss).backward()
@@ -145,33 +146,6 @@ def train_one_epoch(model, optimizer, scaler, loader, device, args, epoch):
 
         if is_main_process():
             pbar.set_postfix(loss=f"{loss.item():.4f}")
-
-# -------------------
-# 构建 ViT 模型（ImageNet 预训练）并替换分类头
-# -------------------
-def build_vit_model(num_classes: int, freeze_backbone: bool = False):
-    weights = ViT_B_16_Weights.IMAGENET1K_V1  # ImageNet 预训练
-    model = vit_b_16(weights=weights)
-    # 兼容不同 torchvision 版本的分类头写法
-    in_features = None
-    if hasattr(model, "heads") and hasattr(model.heads, "head") and isinstance(model.heads.head, nn.Linear):
-        in_features = model.heads.head.in_features
-    elif hasattr(model, "heads") and isinstance(model.heads, nn.Sequential) and len(model.heads) > 0 and isinstance(model.heads[0], nn.Linear):
-        in_features = model.heads[0].in_features
-    elif hasattr(model, "hidden_dim"):
-        in_features = model.hidden_dim
-    else:
-        # 兜底（ViT-B/16 默认 768）
-        in_features = 768
-    model.heads = nn.Linear(in_features, num_classes)
-
-    if freeze_backbone:
-        for name, p in model.named_parameters():
-            # 仅训练 heads
-            if "heads" not in name:
-                p.requires_grad = False
-
-    return model, weights
 
 # -------------------
 # main_worker
@@ -206,30 +180,19 @@ def main_worker():
 
     # 模型 & 预处理
     freeze_backbone = (args.train_scope == "head")
-    model, weights = build_vit_model(num_classes=num_classes, freeze_backbone=freeze_backbone)
+    model = build_vit_classifier(num_classes=num_classes, freeze_backbone=freeze_backbone)
     model = model.to(device)
 
-    # 训练/测试增广（使用 ImageNet 均值方差）
-    # 兼容 torchvision 版本差异：旧版 weights 可能无 meta 信息
-    if hasattr(weights, "meta") and "mean" in weights.meta:
-        mean = weights.meta["mean"]
-        std = weights.meta["std"]
-    else:
-        # 默认 ImageNet 统计量
-        mean = (0.48145466, 0.4578275, 0.40821073)
-        std = (0.26862954, 0.26130258, 0.27577711)
-        
+    # Match google/vit-base-patch16-224 and the mask-aware ViT methods.
     train_tf = transforms.Compose([
-        transforms.RandomResizedCrop(224, interpolation=InterpolationMode.BICUBIC),
-        transforms.RandomHorizontalFlip(),
+        transforms.Resize((224, 224), interpolation=InterpolationMode.BICUBIC),
         transforms.ToTensor(),
-        transforms.Normalize(mean=mean, std=std),
+        transforms.Normalize(mean=VIT_IMAGE_MEAN, std=VIT_IMAGE_STD),
     ])
     test_tf = transforms.Compose([
         transforms.Resize((224,224), interpolation=InterpolationMode.BICUBIC),
-        # transforms.CenterCrop(224),
         transforms.ToTensor(),
-        transforms.Normalize(mean=mean, std=std),
+        transforms.Normalize(mean=VIT_IMAGE_MEAN, std=VIT_IMAGE_STD),
     ])
 
     train_ds = ImageListDataset(args.train_txt, label_to_idx, transform=train_tf)
@@ -239,7 +202,7 @@ def main_worker():
     test_sampler  = DistributedSampler(test_ds, shuffle=False) if args.world_size > 1 else None
 
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, sampler=train_sampler,
-                              shuffle=(train_sampler is None), num_workers=args.num_workers, pin_memory=True, drop_last=True)
+                              shuffle=(train_sampler is None), num_workers=args.num_workers, pin_memory=True, drop_last=False)
     test_loader = DataLoader(test_ds, batch_size=args.batch_size, sampler=test_sampler,
                              shuffle=False, num_workers=args.num_workers, pin_memory=True)
 

@@ -21,6 +21,7 @@ checkpoints/
 ckpt/
 outputs/
 results/
+seed_results/
 runs/
 wandb/
 tensorboard/

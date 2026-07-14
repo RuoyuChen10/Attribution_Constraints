@@ -17,7 +17,7 @@ from torchvision.models import resnet101, ResNet101_Weights
 from PIL import Image
 from tqdm import tqdm
 
-from dataloader import make_imagenet_s_dataloaders
+from dataloader import IMAGENET_MEAN, IMAGENET_STD, make_imagenet_s_dataloaders
 # from interpretation.HUMAN_LIMA_Efficient import HumanLIMA
 from utils import mkdir, SubRegionDivision
 
@@ -281,6 +281,9 @@ def main_worker():
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         target_size=(224,224),
+        image_mean=IMAGENET_MEAN,
+        image_std=IMAGENET_STD,
+        image_interpolation=InterpolationMode.BILINEAR,
     )
     train_sampler = DistributedSampler(train_ds) if args.world_size > 1 else None
     test_sampler  = DistributedSampler(test_ds, shuffle=False) if args.world_size > 1 else None

@@ -174,8 +174,8 @@ def main_worker():
         mean = weights.meta["mean"]
         std = weights.meta["std"]
     else:
-        mean = (0.48145466, 0.4578275, 0.40821073)
-        std = (0.26862954, 0.26130258, 0.27577711)
+        mean = (0.485, 0.456, 0.406)
+        std = (0.229, 0.224, 0.225)
 
     # 增广与预处理
     train_tf = transforms.Compose([

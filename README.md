@@ -10,11 +10,11 @@ This repository studies visual attribution methods whose explanations align with
 ## Setup
 
 ```bash
-conda create -n vea python=3.10
-conda activate vea
+conda env create -f environment.yml
+conda activate prior_alignment
 ```
 
-Install the PyTorch build appropriate for your CUDA version, followed by the project dependencies used by the selected training script.
+The provided environment uses PyTorch 2.5.1 with CUDA 12.1 and pins the remaining training, attribution, and visualization dependencies.
 
 ## Datasets
 

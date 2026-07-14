@@ -12,7 +12,7 @@ from torchvision import transforms
 from torchvision.transforms import InterpolationMode
 from transformers import CLIPModel, AutoTokenizer
 from tqdm import tqdm
-from torchvision.models import vit_b_16, ViT_B_16_Weights
+from vit_model import LogitsOnlyViT, VIT_IMAGE_MEAN, VIT_IMAGE_STD, build_vit_classifier
 
 from interpretation.LIMA import BlackBoxSingleModalCounterfactualSubModularExplanation
 from utils import mkdir, SubRegionDivision
@@ -47,28 +47,7 @@ def build_label_map(*list_files: str):
 # 构建 ViT 模型（ImageNet 预训练）并替换分类头
 # -------------------
 def build_vit_model(num_classes: int, freeze_backbone: bool = False):
-    weights = ViT_B_16_Weights.IMAGENET1K_V1  # ImageNet 预训练
-    model = vit_b_16(weights=weights)
-    # 兼容不同 torchvision 版本的分类头写法
-    in_features = None
-    if hasattr(model, "heads") and hasattr(model.heads, "head") and isinstance(model.heads.head, nn.Linear):
-        in_features = model.heads.head.in_features
-    elif hasattr(model, "heads") and isinstance(model.heads, nn.Sequential) and len(model.heads) > 0 and isinstance(model.heads[0], nn.Linear):
-        in_features = model.heads[0].in_features
-    elif hasattr(model, "hidden_dim"):
-        in_features = model.hidden_dim
-    else:
-        # 兜底（ViT-B/16 默认 768）
-        in_features = 768
-    model.heads = nn.Linear(in_features, num_classes)
-
-    if freeze_backbone:
-        for name, p in model.named_parameters():
-            # 仅训练 heads
-            if "heads" not in name:
-                p.requires_grad = False
-
-    return model, weights
+    return build_vit_classifier(num_classes, freeze_backbone)
 
 def load_checkpoint_flex(model: nn.Module, ckpt_path: str, map_location="cpu"):
     print(f"[Info] Loading checkpoint: {ckpt_path}")
@@ -132,20 +111,16 @@ def main():
     print(f"[Info] Num classes = {num_classes}")
 
     # 模型 & 预处理
-    model, weights = build_vit_model(num_classes=num_classes)
+    model = build_vit_model(num_classes=num_classes)
     model.to(device)
         
     # 加载权重
     load_checkpoint_flex(model, args.ckpt, map_location=device)
+    model = LogitsOnlyViT(model).to(device)
     model.eval()
     
     # 测试时的 ImageNet 统计（兼容无 meta 的情况）
-    if hasattr(weights, "meta") and "mean" in weights.meta:
-        mean = weights.meta["mean"]
-        std = weights.meta["std"]
-    else:
-        mean = (0.48145466, 0.4578275, 0.40821073)
-        std  = (0.26862954, 0.26130258, 0.27577711)
+    mean, std = VIT_IMAGE_MEAN, VIT_IMAGE_STD
 
     img_tf = transforms.Compose([
         transforms.Resize((224,224), interpolation=InterpolationMode.BICUBIC),

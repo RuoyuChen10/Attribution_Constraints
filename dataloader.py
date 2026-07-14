@@ -11,6 +11,14 @@ from torchvision import transforms
 from torchvision.transforms import InterpolationMode
 
 
+OPENAI_CLIP_MEAN = (0.48145466, 0.4578275, 0.40821073)
+OPENAI_CLIP_STD = (0.26862954, 0.26130258, 0.27577711)
+IMAGENET_MEAN = (0.485, 0.456, 0.406)
+IMAGENET_STD = (0.229, 0.224, 0.225)
+HF_VIT_MEAN = (0.5, 0.5, 0.5)
+HF_VIT_STD = (0.5, 0.5, 0.5)
+
+
 def read_list_file(list_path: str) -> List[Tuple[str, str, str]]:
     """读取 txt，每行: image_path mask_path label_name"""
     triplets = []
@@ -47,10 +55,11 @@ class PascalSaliencyDataset(Dataset):
         list_file: str,
         label_to_idx: Dict[str, int],
         target_size: Optional[Tuple[int, int]] = (448, 448),  # 设 None 保持原图
-        image_mean: Tuple[float, float, float] = [0.48145466, 0.4578275, 0.40821073],
-        image_std: Tuple[float, float, float] = [0.26862954, 0.26130258, 0.27577711],
+        image_mean: Tuple[float, float, float] = OPENAI_CLIP_MEAN,
+        image_std: Tuple[float, float, float] = OPENAI_CLIP_STD,
         normalize_image: bool = True,
         mask_interp: str = "bilinear",  # "nearest" | "bilinear"
+        image_interpolation: InterpolationMode = InterpolationMode.BICUBIC,
     ):
         super().__init__()
         self.items = read_list_file(list_file)
@@ -62,7 +71,7 @@ class PascalSaliencyDataset(Dataset):
         # 图像预处理
         tfs = []
         if target_size is not None:
-            tfs.append(transforms.Resize(target_size, interpolation=InterpolationMode.BILINEAR))
+            tfs.append(transforms.Resize(target_size, interpolation=image_interpolation))
         tfs.append(transforms.ToTensor())  # [0,1]
         if normalize_image:
             tfs.append(transforms.Normalize(mean=image_mean, std=image_std))
@@ -119,6 +128,9 @@ def make_dataloaders(
     target_size: Optional[Tuple[int, int]] = (448, 448),
     normalize_image: bool = True,
     mask_interp: str = "bilinear",
+    image_mean: Tuple[float, float, float] = OPENAI_CLIP_MEAN,
+    image_std: Tuple[float, float, float] = OPENAI_CLIP_STD,
+    image_interpolation: InterpolationMode = InterpolationMode.BICUBIC,
 ):
     label_to_idx = build_label_map(train_txt, test_txt)
 
@@ -128,6 +140,9 @@ def make_dataloaders(
         target_size=target_size,
         normalize_image=normalize_image,
         mask_interp=mask_interp,
+        image_mean=image_mean,
+        image_std=image_std,
+        image_interpolation=image_interpolation,
     )
     test_ds = PascalSaliencyDataset(
         list_file=test_txt,
@@ -135,6 +150,9 @@ def make_dataloaders(
         target_size=target_size,
         normalize_image=normalize_image,
         mask_interp=mask_interp,
+        image_mean=image_mean,
+        image_std=image_std,
+        image_interpolation=image_interpolation,
     )
 
     train_loader = DataLoader(
@@ -164,9 +182,10 @@ class ImageNetSDataset(Dataset):
         list_file: str,
         label_to_idx: Dict[str, int],
         target_size: Tuple[int, int] = (224, 224),
-        image_mean: Tuple[float, float, float] = (0.48145466, 0.4578275, 0.40821073),
-        image_std: Tuple[float, float, float] = (0.26862954, 0.26130258, 0.27577711),
+        image_mean: Tuple[float, float, float] = OPENAI_CLIP_MEAN,
+        image_std: Tuple[float, float, float] = OPENAI_CLIP_STD,
         normalize_image: bool = True,
+        image_interpolation: InterpolationMode = InterpolationMode.BICUBIC,
     ):
         super().__init__()
         self.items = read_list_file(list_file)
@@ -175,7 +194,7 @@ class ImageNetSDataset(Dataset):
 
         # image transform
         tfs = [
-            transforms.Resize(target_size, interpolation=InterpolationMode.BILINEAR),
+            transforms.Resize(target_size, interpolation=image_interpolation),
             transforms.ToTensor(),  # [0,1]
         ]
         if normalize_image:
@@ -235,6 +254,9 @@ def make_imagenet_s_dataloaders(
     num_workers: int = 8,
     target_size: Tuple[int, int] = (224, 224),
     normalize_image: bool = True,
+    image_mean: Tuple[float, float, float] = OPENAI_CLIP_MEAN,
+    image_std: Tuple[float, float, float] = OPENAI_CLIP_STD,
+    image_interpolation: InterpolationMode = InterpolationMode.BICUBIC,
 ):
     label_to_idx = build_label_map(train_txt, val_txt)
 
@@ -243,12 +265,18 @@ def make_imagenet_s_dataloaders(
         label_to_idx=label_to_idx,
         target_size=target_size,
         normalize_image=normalize_image,
+        image_mean=image_mean,
+        image_std=image_std,
+        image_interpolation=image_interpolation,
     )
     val_ds = ImageNetSDataset(
         list_file=val_txt,
         label_to_idx=label_to_idx,
         target_size=target_size,
         normalize_image=normalize_image,
+        image_mean=image_mean,
+        image_std=image_std,
+        image_interpolation=image_interpolation,
     )
 
     train_loader = DataLoader(

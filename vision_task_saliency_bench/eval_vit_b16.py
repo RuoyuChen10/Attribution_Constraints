@@ -7,11 +7,12 @@ import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 from torchvision.transforms import InterpolationMode
-from torchvision.models import vit_b_16, ViT_B_16_Weights
 from PIL import Image
 from tqdm import tqdm
 import csv
 from collections import defaultdict
+
+from vit_model import VIT_IMAGE_MEAN, VIT_IMAGE_STD, build_vit_classifier, vit_logits
 
 class AddRandomNoise(object):
     def __init__(self, noise_type='gaussian', mean=0.0, std=0.05, scale=0.05):
@@ -81,21 +82,7 @@ class ImageListDataset(Dataset):
 # 模型
 # -------------------
 def build_vit_model(num_classes: int):
-    weights = ViT_B_16_Weights.IMAGENET1K_V1
-    model = vit_b_16(weights=weights)
-
-    # 兼容不同 torchvision 版本的分类头
-    if hasattr(model, "heads") and hasattr(model.heads, "head") and isinstance(model.heads.head, nn.Linear):
-        in_features = model.heads.head.in_features
-    elif hasattr(model, "heads") and isinstance(model.heads, nn.Sequential) and len(model.heads) > 0 and isinstance(model.heads[0], nn.Linear):
-        in_features = model.heads[0].in_features
-    elif hasattr(model, "hidden_dim"):
-        in_features = model.hidden_dim
-    else:
-        in_features = 768  # ViT-B/16 默认
-
-    model.heads = nn.Linear(in_features, num_classes)
-    return model, weights
+    return build_vit_classifier(num_classes)
 
 def load_checkpoint_flex(model: nn.Module, ckpt_path: str, map_location="cpu"):
     print(f"[Info] Loading checkpoint: {ckpt_path}")
@@ -152,7 +139,7 @@ def evaluate(model, dataloader, device, amp=True, calc_confmat=False, idx_to_lab
         images = images.to(device, non_blocking=True)
         labels = labels.to(device, non_blocking=True)
         with torch.autocast(autocast_device, enabled=amp):
-            logits = model(images)
+            logits = vit_logits(model, images)
 
         # Top-1
         pred1 = logits.argmax(dim=1)
@@ -211,23 +198,15 @@ def main():
     print(f"[Info] Num classes = {num_classes}")
 
     # 模型 & 预处理
-    model, weights = build_vit_model(num_classes=num_classes)
+    model = build_vit_model(num_classes=num_classes)
     model.to(device)
 
-    # 测试时的 ImageNet 统计（兼容无 meta 的情况）
-    if hasattr(weights, "meta") and "mean" in weights.meta:
-        mean = weights.meta["mean"]
-        std = weights.meta["std"]
-    else:
-        # mean = (0.48145466, 0.4578275, 0.40821073)
-        # std  = (0.26862954, 0.26130258, 0.27577711)
-        mean = (0.485, 0.456, 0.406)
-        std = (0.229, 0.224, 0.225)
+    mean, std = VIT_IMAGE_MEAN, VIT_IMAGE_STD
     
     print(args.noisy)
     if args.noisy:
         test_tf = transforms.Compose([
-            transforms.Resize(224, interpolation=InterpolationMode.BICUBIC),
+            transforms.Resize((224, 224), interpolation=InterpolationMode.BICUBIC),
             # transforms.CenterCrop(224),
             transforms.ToTensor(),
             AddRandomNoise(noise_type='gaussian', std=0.1),  # 随机噪声层
@@ -236,7 +215,7 @@ def main():
         print("[Info] Added random noise during evaluation.")
     else:
         test_tf = transforms.Compose([
-            transforms.Resize(224, interpolation=InterpolationMode.BICUBIC),
+            transforms.Resize((224, 224), interpolation=InterpolationMode.BICUBIC),
             # transforms.CenterCrop(224),
             transforms.ToTensor(),
             transforms.Normalize(mean=mean, std=std),

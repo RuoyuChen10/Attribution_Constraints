@@ -26,6 +26,7 @@ torch.backends.cuda.enable_math_sdp(True)
 from dataloader import ImageNetSDataset, make_dataloaders
 
 # from interpretation.HUMAN_LIMA_Efficient import HumanLIMA
+from interpretation.grad_eclip import grad_eclip_vit
 from utils import mkdir, SubRegionDivision
 
 # 关闭 tokenizer 并行提示
@@ -133,53 +134,6 @@ def evaluate(model, dataloader, device, idx_to_label, templates):
 
     return top1/n, top2/n
 
-def grad_eclip_vit_tokens(
-    model,
-    pixel_values,
-    text_feats,
-    labels,
-    grid_hw=(16, 16),
-    use_logprob=True,
-):
-    out = model.vision_model(pixel_values=pixel_values, output_hidden_states=True, return_dict=True)
-    tokens = out.last_hidden_state                  # [B,1+N,C]
-    cls   = tokens[:, :1, :]                        # [B,1,C]
-    patch = tokens[:, 1:, :]                        # [B,N,C]
-
-    # ---- 关键：让 image embedding 显式依赖 patch ----
-    # 用 mean-pooled token 作为 pooled（你也可以用 cls + eps*patch_mean）
-    patch_mean = patch.mean(dim=1, keepdim=True)    # [B,1,C]
-    pooled = (cls + patch_mean).squeeze(1)          # [B,C]  显式依赖 patch
-
-    img_emb = model.visual_projection(pooled)       # [B,D]
-    img_emb = img_emb / img_emb.norm(dim=-1, keepdim=True)
-
-    scale = model.logit_scale.exp()
-    logits = (img_emb @ text_feats) * scale         # [B,C]
-
-    if use_logprob:
-        logp = F.log_softmax(logits.float(), dim=1)
-        target = logp.gather(1, labels.view(-1, 1)).sum()
-    else:
-        target = logits.float().gather(1, labels.view(-1, 1)).sum()
-
-    # grads wrt patch tokens
-    G = torch.autograd.grad(
-        outputs=target,
-        inputs=patch,
-        create_graph=True,
-        retain_graph=True,
-        only_inputs=True,
-    )[0]                                             # [B,N,C]
-
-    alpha = G.mean(dim=1)                            # [B,C]
-    E = torch.relu((patch * alpha.unsqueeze(1)).sum(dim=-1))  # [B,N]
-
-    H, W = grid_hw
-    E = E.view(E.size(0), 1, H, W)
-    E = E / (E.amax(dim=(2, 3), keepdim=True) + 1e-6)
-    return E, logits
-
 def train_one_epoch(model, optimizer, scaler, loader, device, tokenizer, idx_to_label, args, epoch, text_feats):
     model.train()
     ce = nn.CrossEntropyLoss()
@@ -205,12 +159,9 @@ def train_one_epoch(model, optimizer, scaler, loader, device, tokenizer, idx_to_
             
         # ========= forward =========
         with torch.autocast("cuda", enabled=args.amp):
-            img_feats = model.get_image_features(pixel_values=images)  # [B, D]
-            img_feats = img_feats / img_feats.norm(dim=-1, keepdim=True)
-            scale = model.logit_scale.exp()
-            logits = (img_feats @ text_feats) * scale
-            
-            E, logits = grad_eclip_vit_tokens(model, images, text_feats, labels, grid_hw=(16,16))
+            E, logits = grad_eclip_vit(
+                model, images, text_feats, labels, grid_hw=(16, 16)
+            )
             loss_ce = ce(logits, labels)
             
         mask_small = F.interpolate(masks.unsqueeze(1).float(), size=(16,16), mode="nearest")  # [B,1,16,16]
