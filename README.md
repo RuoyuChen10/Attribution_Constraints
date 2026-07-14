@@ -66,7 +66,9 @@ torchrun --standalone --nproc-per-node=2 train_prior_alignment.py \
   --loss-variant adaptive_log --adaptive-beta 2 --seed 0
 ```
 
-Checkpoints contain the unwrapped model state dict under `model`, so the existing explanation and Pointing Game entrypoints can load them directly. Per-epoch `metrics.jsonl` records Top-1/Top-2 together with bad gain, best human gain, excess, reference scale, adaptive weight, and the satisfied-region fraction.
+Checkpoints contain the unwrapped model state dict under `model`, so the existing explanation and Pointing Game entrypoints can load them directly. Each epoch is divided into four evaluation segments by default. A segment that produced only CE updates and no alignment examples is not evaluated. After alignment starts, evaluation runs at the next quarter boundary; training stops early if Top-1 falls at least `0.05` (five percentage points) below its historical best. These defaults can be changed with `--evals-per-epoch`, `--eval-without-alignment`, `--early-stop-acc-drop`, and `--disable-accuracy-drop-stop`.
+
+Each performed evaluation appends to `metrics.jsonl`, recording its epoch fraction and Top-1/Top-2 together with bad gain, best human gain, excess, reference scale, adaptive weight, and the satisfied-region fraction.
 
 ### Three-seed experiment matrix
 
@@ -82,7 +84,7 @@ DATASETS=saliency-bench MODELS=clip \
   ./run_prior_alignment_experiments.sh
 ```
 
-Without overrides, the launcher uses all three models and also includes ImageNet-S919 when all listed files are available. Space-separated `DATASETS`, `MODELS`, `SEEDS`, and `BETAS` environment variables restrict the matrix. Common overrides include `EPOCHS`, `BATCH_SIZE`, `NUM_WORKERS`, `ALIGNMENT_INTERVAL`, `LIMA_LENGTH`, and `CUDA_VISIBLE_DEVICES`.
+Without overrides, the launcher uses all three models and also includes ImageNet-S919 when all listed files are available. Space-separated `DATASETS`, `MODELS`, `SEEDS`, and `BETAS` environment variables restrict the matrix. Common overrides include `EPOCHS`, `BATCH_SIZE`, `NUM_WORKERS`, `ALIGNMENT_INTERVAL`, `EVALS_PER_EPOCH`, `EARLY_STOP_ACC_DROP`, `LIMA_LENGTH`, and `CUDA_VISIBLE_DEVICES`.
 
 Results are written under `seed_results/<dataset>/<model>/<method>/seed_<n>/`. Aggregated tables are saved as `seed_results/prior_alignment_summary.csv` and `seed_results/prior_alignment_summary.md`.
 

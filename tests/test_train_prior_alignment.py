@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import torch
 import torch.nn as nn
@@ -15,9 +17,12 @@ from train_prior_alignment import (
     DistributedContext,
     UnifiedClassifier,
     checkpoint_payload,
+    epoch_evaluation_boundaries,
     make_grad_scaler,
     run_deviation_backward,
     run_redundancy_backward,
+    should_stop_for_accuracy_drop,
+    train_one_epoch,
 )
 
 
@@ -31,6 +36,124 @@ class TinyClassifier(nn.Module):
 
 
 class TrainPriorAlignmentTest(unittest.TestCase):
+    def test_four_evaluation_boundaries(self) -> None:
+        self.assertEqual(
+            epoch_evaluation_boundaries(10, 4),
+            {3: 1, 5: 2, 8: 3, 10: 4},
+        )
+        self.assertEqual(
+            epoch_evaluation_boundaries(2, 4),
+            {1: 2, 2: 4},
+        )
+
+    def test_accuracy_drop_uses_five_point_default_semantics(self) -> None:
+        self.assertFalse(should_stop_for_accuracy_drop(0.61, 0.65, 0.05))
+        self.assertTrue(should_stop_for_accuracy_drop(0.60, 0.65, 0.05))
+        self.assertFalse(should_stop_for_accuracy_drop(0.10, 0.0, 0.05))
+
+    def test_ce_only_segments_skip_evaluation(self) -> None:
+        torch.manual_seed(11)
+        device = torch.device("cpu")
+        context = DistributedContext(0, 1, 0, device)
+        model = TinyClassifier()
+        optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+        scaler = make_grad_scaler(enabled=False)
+        images = torch.rand(1, 3, 2, 2)
+        batch = (
+            images,
+            torch.zeros(1, 2, 2),
+            torch.tensor([0]),
+            ["unused.jpg"],
+            ["unused.npy"],
+        )
+        loader = [batch, batch, batch, batch]
+        args = SimpleNamespace(
+            amp=False,
+            epochs=1,
+            alignment_interval=100,
+            evals_per_epoch=4,
+            eval_without_alignment=False,
+            lambda_deviation=0.5,
+            lambda_redundancy=0.5,
+            alignment_batch_size=1,
+        )
+        evaluations = []
+
+        global_step, _, stopped = train_one_epoch(
+            model=model,
+            optimizer=optimizer,
+            scaler=scaler,
+            loader=loader,
+            human_lima=None,
+            loss_config=AlignmentLossConfig(variant="paper"),
+            args=args,
+            context=context,
+            epoch=1,
+            global_step=0,
+            evaluation_callback=lambda *values: evaluations.append(values) or False,
+        )
+
+        self.assertEqual(global_step, 4)
+        self.assertFalse(stopped)
+        self.assertEqual(evaluations, [])
+
+    def test_alignment_examples_enable_segment_evaluation(self) -> None:
+        torch.manual_seed(12)
+        device = torch.device("cpu")
+        context = DistributedContext(0, 1, 0, device)
+        model = TinyClassifier()
+        optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+        scaler = make_grad_scaler(enabled=False)
+        image = torch.rand(3, 2, 2)
+        batch = (
+            image.unsqueeze(0),
+            torch.zeros(1, 2, 2),
+            torch.tensor([0]),
+            ["unused.jpg"],
+            ["unused.npy"],
+        )
+        example = DeviationExample(
+            insertion=image,
+            deletion=1.0 - image,
+            label=torch.tensor(0),
+            best_human_gain=torch.tensor(0.1),
+            full_confidence=torch.tensor(0.9),
+        )
+        args = SimpleNamespace(
+            amp=False,
+            epochs=1,
+            alignment_interval=1,
+            evals_per_epoch=4,
+            eval_without_alignment=False,
+            lambda_deviation=0.5,
+            lambda_redundancy=0.5,
+            alignment_batch_size=1,
+        )
+        evaluations = []
+
+        with patch(
+            "train_prior_alignment.create_alignment_examples",
+            return_value=([example], [], 1),
+        ):
+            global_step, _, stopped = train_one_epoch(
+                model=model,
+                optimizer=optimizer,
+                scaler=scaler,
+                loader=[batch, batch, batch, batch],
+                human_lima=None,
+                loss_config=AlignmentLossConfig(variant="paper"),
+                args=args,
+                context=context,
+                epoch=1,
+                global_step=0,
+                evaluation_callback=lambda *values: evaluations.append(values)
+                or False,
+            )
+
+        self.assertEqual(global_step, 4)
+        self.assertFalse(stopped)
+        self.assertEqual(len(evaluations), 4)
+
     def test_single_process_alignment_backward(self) -> None:
         torch.manual_seed(3)
         device = torch.device("cpu")

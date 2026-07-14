@@ -67,6 +67,8 @@ optional_args=()
 [[ -n "${NUM_WORKERS:-}" ]] && optional_args+=(--num-workers "${NUM_WORKERS}")
 [[ -n "${ALIGNMENT_INTERVAL:-}" ]] && optional_args+=(--alignment-interval "${ALIGNMENT_INTERVAL}")
 [[ -n "${ALIGNMENT_BATCH_SIZE:-}" ]] && optional_args+=(--alignment-batch-size "${ALIGNMENT_BATCH_SIZE}")
+[[ -n "${EVALS_PER_EPOCH:-}" ]] && optional_args+=(--evals-per-epoch "${EVALS_PER_EPOCH}")
+[[ -n "${EARLY_STOP_ACC_DROP:-}" ]] && optional_args+=(--early-stop-acc-drop "${EARLY_STOP_ACC_DROP}")
 [[ -n "${LAMBDA_DEVIATION:-}" ]] && optional_args+=(--lambda-deviation "${LAMBDA_DEVIATION}")
 [[ -n "${LAMBDA_REDUNDANCY:-}" ]] && optional_args+=(--lambda-redundancy "${LAMBDA_REDUNDANCY}")
 [[ -n "${LIMA_LENGTH:-}" ]] && optional_args+=(--lima-length "${LIMA_LENGTH}")
@@ -100,11 +102,11 @@ for dataset in "${datasets[@]}"; do
   for model in "${models[@]}"; do
     for variant in "${variants[@]}"; do
       if [[ "${variant}" == "paper" ]]; then
-        method="prior_alignment_paper"
+        method="prior_alignment_paper_segmented"
         loss_args=(--loss-variant paper)
       else
         beta="${variant##*beta}"
-        method="prior_alignment_adaptive_beta${beta}"
+        method="prior_alignment_adaptive_beta${beta}_segmented"
         loss_args=(--loss-variant adaptive_log --adaptive-beta "${beta}")
       fi
 
@@ -153,29 +155,49 @@ import sys
 from pathlib import Path
 
 run_dir = Path(sys.argv[1])
-records = [
-    json.loads(line)
-    for line in (run_dir / "metrics.jsonl").read_text().splitlines()
-    if line.strip()
-]
-if not records:
-    raise SystemExit(f"No epoch metrics found in {run_dir / 'metrics.jsonl'}")
-best = max(records, key=lambda item: item["top1"])
-summary = {
-    "dataset": sys.argv[2],
-    "model": sys.argv[3],
-    "method": sys.argv[4],
-    "seed": int(sys.argv[5]),
-    "epoch": best["epoch"],
-    "top1": best["top1"],
-    "top2": best["top2"],
-    "selection": "best_top1",
-}
+metrics_path = run_dir / "metrics.jsonl"
+records = []
+if metrics_path.is_file():
+    records = [
+        json.loads(line)
+        for line in metrics_path.read_text().splitlines()
+        if line.strip()
+    ]
+if records:
+    best = max(records, key=lambda item: item["top1"])
+    summary = {
+        "dataset": sys.argv[2],
+        "model": sys.argv[3],
+        "method": sys.argv[4],
+        "seed": int(sys.argv[5]),
+        "epoch": best["epoch"],
+        "epoch_fraction": best.get("epoch_fraction", 1.0),
+        "top1": best["top1"],
+        "top2": best["top2"],
+        "selection": "best_top1",
+        "status": "complete",
+    }
+else:
+    summary = {
+        "dataset": sys.argv[2],
+        "model": sys.argv[3],
+        "method": sys.argv[4],
+        "seed": int(sys.argv[5]),
+        "epoch": None,
+        "epoch_fraction": None,
+        "top1": None,
+        "top2": None,
+        "selection": "skipped_no_alignment_loss",
+        "status": "no_alignment_evaluation",
+    }
 (run_dir / "metrics.json").write_text(json.dumps(summary, indent=2) + "\n")
-print(
-    f"[best] epoch={summary['epoch']} top1={summary['top1']:.4f} "
-    f"top2={summary['top2']:.4f}"
-)
+if summary["top1"] is None:
+    print("[best] skipped: training produced no segment with alignment loss")
+else:
+    print(
+        f"[best] epoch={summary['epoch']} fraction={summary['epoch_fraction']:.2f} "
+        f"top1={summary['top1']:.4f} top2={summary['top2']:.4f}"
+    )
 PY
       done
     done
@@ -193,7 +215,9 @@ from pathlib import Path
 root = Path(sys.argv[1])
 records = []
 for path in root.glob("*/*/prior_alignment_*/seed_*/metrics.json"):
-    records.append(json.loads(path.read_text()))
+    record = json.loads(path.read_text())
+    if record.get("top1") is not None:
+        records.append(record)
 
 groups = {}
 for record in records:

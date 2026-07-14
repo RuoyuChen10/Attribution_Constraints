@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import torch
 import torch.distributed as dist
 import torch.nn as nn
@@ -18,6 +20,7 @@ from train_prior_alignment import (
     run_deviation_backward,
     run_redundancy_backward,
     setup_distributed,
+    train_one_epoch,
 )
 
 
@@ -111,6 +114,57 @@ def main() -> None:
             raise AssertionError(f"Expected global count 1, got {diagnostics.count}")
         scaler.step(optimizer)
         scaler.update()
+
+        # Rank 0 requests an intra-epoch stop at the first evaluation boundary;
+        # train_one_epoch must broadcast it so both ranks exit after one step.
+        batch = (
+            dummy.unsqueeze(0),
+            torch.zeros(1, 2, 2, device=context.device),
+            torch.tensor([0], device=context.device),
+            ["unused.jpg"],
+            ["unused.npy"],
+        )
+        args = SimpleNamespace(
+            amp=False,
+            epochs=1,
+            alignment_interval=100,
+            evals_per_epoch=4,
+            eval_without_alignment=True,
+            lambda_deviation=0.5,
+            lambda_redundancy=0.5,
+            alignment_batch_size=1,
+        )
+        callback_calls = 0
+
+        def request_stop(*_) -> bool:
+            nonlocal callback_calls
+            callback_calls += 1
+            return True
+
+        global_step, _, stopped = train_one_epoch(
+            model=model,
+            optimizer=optimizer,
+            scaler=scaler,
+            loader=[batch, batch, batch, batch],
+            human_lima=None,
+            loss_config=AlignmentLossConfig(variant="paper"),
+            args=args,
+            context=context,
+            epoch=1,
+            global_step=0,
+            evaluation_callback=request_stop,
+        )
+        if not stopped or global_step != 1:
+            raise AssertionError(
+                f"Expected synchronized stop at step 1, got stopped={stopped}, "
+                f"global_step={global_step}"
+            )
+        expected_calls = 1 if context.rank == 0 else 0
+        if callback_calls != expected_calls:
+            raise AssertionError(
+                f"Rank {context.rank}: expected {expected_calls} callback calls, "
+                f"got {callback_calls}"
+            )
 
         parameters = torch.cat([parameter.detach().flatten() for parameter in model.parameters()])
         gathered = [torch.empty_like(parameters) for _ in range(context.world_size)]

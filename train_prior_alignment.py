@@ -20,7 +20,7 @@ from contextlib import nullcontext
 from dataclasses import asdict, dataclass
 from datetime import timedelta
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Callable, Iterable, Sequence
 
 import cv2
 import numpy as np
@@ -214,6 +214,28 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lambda-deviation", type=float, default=0.5)
     parser.add_argument("--lambda-redundancy", type=float, default=0.5)
     parser.add_argument("--alignment-interval", type=int, default=10)
+    parser.add_argument(
+        "--evals-per-epoch",
+        type=int,
+        default=4,
+        help="Maximum number of within-epoch evaluation boundaries",
+    )
+    parser.add_argument(
+        "--eval-without-alignment",
+        action="store_true",
+        help="Evaluate a segment even when it produced no alignment examples",
+    )
+    parser.add_argument(
+        "--early-stop-acc-drop",
+        type=float,
+        default=0.05,
+        help="Stop when Top-1 falls this far below the historical best",
+    )
+    parser.add_argument(
+        "--disable-accuracy-drop-stop",
+        action="store_true",
+        help="Disable within-epoch early stopping based on Top-1 degradation",
+    )
     parser.add_argument("--confidence-threshold", type=float, default=0.75)
     parser.add_argument("--prior-overlap-threshold", type=float, default=0.15)
     parser.add_argument("--attribution-stop-confidence", type=float, default=0.8)
@@ -308,6 +330,10 @@ def resolve_args(args: argparse.Namespace) -> argparse.Namespace:
 
     if args.alignment_interval <= 0:
         raise ValueError("alignment_interval must be positive")
+    if args.evals_per_epoch <= 0:
+        raise ValueError("evals_per_epoch must be positive")
+    if args.early_stop_acc_drop < 0:
+        raise ValueError("early_stop_acc_drop must be non-negative")
     if args.epochs <= 0 or args.batch_size <= 0:
         raise ValueError("epochs and batch_size must be positive")
     if args.num_workers < 0:
@@ -865,19 +891,29 @@ def train_one_epoch(
     context: DistributedContext,
     epoch: int,
     global_step: int,
-) -> tuple[int, dict[str, float]]:
+    evaluation_callback: Callable[[int, int, int, dict[str, float]], bool]
+    | None = None,
+) -> tuple[int, dict[str, float], bool]:
     model.train()
     deviation_epoch = AlignmentDiagnostics()
     redundancy_epoch = AlignmentDiagnostics()
     selected_local = 0.0
     ce_sum = 0.0
     sample_count = 0
+    alignment_examples_since_evaluation = 0.0
+    total_steps = len(loader)
+    evaluation_boundaries = epoch_evaluation_boundaries(
+        total_steps, args.evals_per_epoch
+    )
+    stopped_early = False
     progress = tqdm(
         loader,
         desc=f"Epoch {epoch}/{args.epochs}",
         disable=not context.is_main,
     )
-    for images, masks, labels, image_paths, _ in progress:
+    for step_in_epoch, (images, masks, labels, image_paths, _) in enumerate(
+        progress, start=1
+    ):
         global_step += 1
         images = images.to(context.device, non_blocking=True)
         labels = labels.to(context.device, non_blocking=True)
@@ -903,6 +939,10 @@ def train_one_epoch(
                 loss_config=loss_config,
             )
             selected_local += selected
+            if args.lambda_deviation > 0:
+                alignment_examples_since_evaluation += len(deviations)
+            if args.lambda_redundancy > 0:
+                alignment_examples_since_evaluation += len(redundancies)
             model.eval()
             dev_diagnostics = run_deviation_backward(
                 model=model,
@@ -940,6 +980,89 @@ def train_one_epoch(
                 red=int(redundancy_epoch.count),
             )
 
+        if step_in_epoch in evaluation_boundaries:
+            segment = evaluation_boundaries[step_in_epoch]
+            global_alignment_examples = global_scalar(
+                alignment_examples_since_evaluation,
+                context.device,
+                context,
+            )
+            alignment_examples_since_evaluation = 0.0
+            should_evaluate = (
+                global_alignment_examples > 0 or args.eval_without_alignment
+            )
+            if should_evaluate and evaluation_callback is not None:
+                train_metrics = collect_training_metrics(
+                    ce_sum=ce_sum,
+                    sample_count=sample_count,
+                    selected_local=selected_local,
+                    deviation=deviation_epoch,
+                    redundancy=redundancy_epoch,
+                    context=context,
+                )
+                barrier(context)
+                stop_requested = False
+                if context.is_main:
+                    stop_requested = evaluation_callback(
+                        step_in_epoch,
+                        total_steps,
+                        segment,
+                        train_metrics,
+                    )
+                stop_tensor = torch.tensor(
+                    int(stop_requested), device=context.device, dtype=torch.int32
+                )
+                if context.distributed:
+                    dist.broadcast(stop_tensor, src=0)
+                stopped_early = bool(stop_tensor.item())
+                model.train()
+                if stopped_early:
+                    break
+            elif not should_evaluate and context.is_main:
+                print(
+                    f"[EvalSkip] Epoch {epoch} segment "
+                    f"{segment}/{args.evals_per_epoch}: "
+                    "no alignment loss in this segment"
+                )
+
+    metrics = collect_training_metrics(
+        ce_sum=ce_sum,
+        sample_count=sample_count,
+        selected_local=selected_local,
+        deviation=deviation_epoch,
+        redundancy=redundancy_epoch,
+        context=context,
+    )
+    return global_step, metrics, stopped_early
+
+
+def epoch_evaluation_boundaries(
+    total_steps: int,
+    evaluations_per_epoch: int,
+) -> dict[int, int]:
+    """Map quarter-like step boundaries to their nominal segment number."""
+
+    if total_steps <= 0:
+        return {}
+    if evaluations_per_epoch <= 0:
+        raise ValueError("evaluations_per_epoch must be positive")
+    boundaries: dict[int, int] = {}
+    for segment in range(1, evaluations_per_epoch + 1):
+        step = math.ceil(total_steps * segment / evaluations_per_epoch)
+        boundaries[step] = segment
+    return boundaries
+
+
+def collect_training_metrics(
+    ce_sum: float,
+    sample_count: int,
+    selected_local: float,
+    deviation: AlignmentDiagnostics,
+    redundancy: AlignmentDiagnostics,
+    context: DistributedContext,
+) -> dict[str, float]:
+    """Create a cumulative epoch snapshot with globally reduced CE counts."""
+
     ce_values = torch.tensor(
         [ce_sum, sample_count], device=context.device, dtype=torch.float64
     )
@@ -947,16 +1070,27 @@ def train_one_epoch(
         dist.all_reduce(ce_values, op=dist.ReduceOp.SUM)
     selected_global = global_scalar(selected_local, context.device, context)
     alignment_epoch = AlignmentDiagnostics()
-    alignment_epoch.add(deviation_epoch)
-    alignment_epoch.add(redundancy_epoch)
-    metrics = {
+    alignment_epoch.add(deviation)
+    alignment_epoch.add(redundancy)
+    return {
         "train_ce": float(ce_values[0].item() / max(ce_values[1].item(), 1.0)),
         "alignment_selected_samples": selected_global,
         **alignment_epoch.averages("alignment"),
-        **deviation_epoch.averages("deviation"),
-        **redundancy_epoch.averages("redundancy"),
+        **deviation.averages("deviation"),
+        **redundancy.averages("redundancy"),
     }
-    return global_step, metrics
+
+
+def should_stop_for_accuracy_drop(
+    current_top1: float,
+    historical_best_top1: float,
+    maximum_drop: float,
+) -> bool:
+    """Return whether absolute Top-1 degradation reached the configured limit."""
+
+    if historical_best_top1 <= 0:
+        return False
+    return historical_best_top1 - current_top1 >= maximum_drop
 
 
 @torch.no_grad()
@@ -1100,7 +1234,75 @@ def main() -> None:
         for epoch in range(start_epoch, args.epochs + 1):
             if train_sampler is not None:
                 train_sampler.set_epoch(epoch)
-            global_step, train_metrics = train_one_epoch(
+
+            def evaluate_segment(
+                step_in_epoch: int,
+                total_steps: int,
+                segment: int,
+                train_metrics: dict[str, float],
+            ) -> bool:
+                nonlocal best_top1
+                assert test_loader is not None
+                top1, top2 = evaluate(
+                    base_model, test_loader, context.device, args.amp
+                )
+                previous_best = best_top1
+                accuracy_drop = max(previous_best - top1, 0.0)
+                improved = top1 > previous_best
+                if improved:
+                    best_top1 = top1
+                evaluation_global_step = global_step + step_in_epoch
+                stopped = (
+                    not args.disable_accuracy_drop_stop
+                    and should_stop_for_accuracy_drop(
+                        current_top1=top1,
+                        historical_best_top1=previous_best,
+                        maximum_drop=args.early_stop_acc_drop,
+                    )
+                )
+                metrics = {
+                    "epoch": epoch,
+                    "epoch_segment": segment,
+                    "evals_per_epoch": args.evals_per_epoch,
+                    "step_in_epoch": step_in_epoch,
+                    "steps_in_epoch": total_steps,
+                    "epoch_fraction": step_in_epoch / max(total_steps, 1),
+                    "global_step": evaluation_global_step,
+                    "top1": top1,
+                    "top2": top2,
+                    "best_top1": best_top1,
+                    "accuracy_drop_from_best": accuracy_drop,
+                    "early_stopped": stopped,
+                    **train_metrics,
+                }
+                print(
+                    f"[Eval] Epoch {epoch}: top1={top1:.4f}, top2={top2:.4f} "
+                    f"(segment={segment}/{args.evals_per_epoch}, "
+                    f"step={step_in_epoch}/{total_steps})"
+                )
+                print("[Alignment] " + json.dumps(train_metrics, sort_keys=True))
+                append_jsonl(output_dir / "metrics.jsonl", metrics)
+                if improved:
+                    payload = checkpoint_payload(
+                        base_model,
+                        optimizer,
+                        scaler,
+                        args,
+                        label_to_idx,
+                        epoch,
+                        evaluation_global_step,
+                        best_top1,
+                    )
+                    torch.save(payload, output_dir / "best.pt")
+                if stopped:
+                    print(
+                        f"[EarlyStop] Top-1 dropped by {accuracy_drop:.4f} "
+                        f"from best={previous_best:.4f}; "
+                        f"threshold={args.early_stop_acc_drop:.4f}."
+                    )
+                return stopped
+
+            global_step, train_metrics, stopped_early = train_one_epoch(
                 model=model,
                 optimizer=optimizer,
                 scaler=scaler,
@@ -1111,30 +1313,11 @@ def main() -> None:
                 context=context,
                 epoch=epoch,
                 global_step=global_step,
+                evaluation_callback=evaluate_segment,
             )
 
             barrier(context)
             if context.is_main:
-                assert test_loader is not None
-                top1, top2 = evaluate(
-                    base_model, test_loader, context.device, args.amp
-                )
-                improved = top1 > best_top1
-                if improved:
-                    best_top1 = top1
-                metrics = {
-                    "epoch": epoch,
-                    "global_step": global_step,
-                    "top1": top1,
-                    "top2": top2,
-                    "best_top1": best_top1,
-                    **train_metrics,
-                }
-                print(
-                    f"[Eval] Epoch {epoch}: top1={top1:.4f}, top2={top2:.4f}"
-                )
-                print("[Alignment] " + json.dumps(train_metrics, sort_keys=True))
-                append_jsonl(output_dir / "metrics.jsonl", metrics)
                 payload = checkpoint_payload(
                     base_model,
                     optimizer,
@@ -1146,11 +1329,15 @@ def main() -> None:
                     best_top1,
                 )
                 torch.save(payload, output_dir / "last.pt")
-                if improved:
-                    torch.save(payload, output_dir / "best.pt")
                 if args.save_every_epoch:
                     torch.save(payload, output_dir / f"epoch_{epoch}.pt")
+                print(
+                    f"[Epoch] {epoch} complete: "
+                    + json.dumps(train_metrics, sort_keys=True)
+                )
             barrier(context)
+            if stopped_early:
+                break
     finally:
         cleanup_distributed(context)
 
