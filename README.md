@@ -14,7 +14,7 @@ conda env create -f environment.yml
 conda activate prior_alignment
 ```
 
-The provided environment uses PyTorch 2.5.1 with CUDA 12.1 and pins the remaining training, attribution, and visualization dependencies.
+The provided environment uses PyTorch 2.5.1 with CUDA 12.1 and pins the remaining training, attribution, and visualization dependencies. It installs `opencv-contrib-python-headless`, which provides the `cv2.ximgproc` SLIC/SLICO implementation used for region construction.
 
 ## Datasets
 
@@ -31,7 +31,72 @@ ImageNet-S919 provides public segmentation annotations, but its train and valida
 
 ## Running experiments
 
-Training entrypoints are grouped by dataset:
+### Unified prior-alignment training
+
+`train_prior_alignment.py` provides one entrypoint for both datasets and all three model families:
+
+```bash
+python train_prior_alignment.py \
+  --dataset saliency-bench \
+  --model clip \
+  --loss-variant adaptive_log \
+  --adaptive-beta 2 \
+  --seed 0
+```
+
+Supported choices are:
+
+- Dataset: `saliency-bench` or `imagenet-s919`.
+- Model: `clip`, `vit`, or `resnet`.
+- Loss: `paper` or `adaptive_log`.
+
+The `paper` baseline uses the reviewer-motivated zero-margin redundancy loss
+
+```text
+ReLU(F(prefix_after) - F(prefix_before)).
+```
+
+The adaptive loss penalizes only the off-prior gain above the best current prior-consistent gain. Its detached reference scale combines that human-consistent gain with full-image prediction uncertainty. Use `--adaptive-beta 1`, `2`, or `4` for the planned loss-shape ablation. Run `python train_prior_alignment.py --help` for alignment intervals, LIMA length, confidence thresholds, train scope, AMP, resume, and loss-weight options.
+
+For multi-GPU training:
+
+```bash
+torchrun --standalone --nproc-per-node=2 train_prior_alignment.py \
+  --dataset saliency-bench --model vit \
+  --loss-variant adaptive_log --adaptive-beta 2 --seed 0
+```
+
+Checkpoints contain the unwrapped model state dict under `model`, so the existing explanation and Pointing Game entrypoints can load them directly. Per-epoch `metrics.jsonl` records Top-1/Top-2 together with bad gain, best human gain, excess, reference scale, adaptive weight, and the satisfied-region fraction.
+
+### Three-seed experiment matrix
+
+The experiment launcher runs `paper` and `adaptive_log` with beta `1/2/4` using seeds `0/1/2`. Completed runs are skipped and interrupted epoch-level runs resume from `last.pt`:
+
+```bash
+# Inspect the commands first.
+DATASETS=saliency-bench MODELS=clip DRY_RUN=1 \
+  ./run_prior_alignment_experiments.sh
+
+# Run the Saliency-Bench CLIP comparison (4 losses x 3 seeds).
+DATASETS=saliency-bench MODELS=clip \
+  ./run_prior_alignment_experiments.sh
+```
+
+Without overrides, the launcher uses all three models and also includes ImageNet-S919 when all listed files are available. Space-separated `DATASETS`, `MODELS`, `SEEDS`, and `BETAS` environment variables restrict the matrix. Common overrides include `EPOCHS`, `BATCH_SIZE`, `NUM_WORKERS`, `ALIGNMENT_INTERVAL`, `LIMA_LENGTH`, and `CUDA_VISIBLE_DEVICES`.
+
+Results are written under `seed_results/<dataset>/<model>/<method>/seed_<n>/`. Aggregated tables are saved as `seed_results/prior_alignment_summary.csv` and `seed_results/prior_alignment_summary.md`.
+
+The standard comparison baselines can be launched separately:
+
+```bash
+./run_all_baselines_3seeds.sh
+```
+
+Their summaries use the epoch with the best validation Top-1 score and are written to `seed_results/summary.csv` and `seed_results/summary.md`.
+
+### Legacy entrypoints
+
+The original dataset-specific implementations remain available:
 
 ```bash
 # Saliency-Bench
@@ -42,6 +107,15 @@ python vision_task_imagenet-s/human_prior_alignment_v3_resnet.py
 ```
 
 Each script exposes `--train_txt` and `--test_txt`, defaulting to the corresponding lists under `data_list/`. Use `--help` on a specific entrypoint to inspect model, batch size, checkpoint, and distributed-training options.
+
+### Tests
+
+```bash
+python -m unittest discover -s tests -p 'test_*.py' -v
+
+PYTHONPATH=. python -m torch.distributed.run --standalone \
+  --nproc_per_node=2 tests/ddp_alignment_smoke.py
+```
 
 For attribution evaluation, use the Pointing Game scripts:
 

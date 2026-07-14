@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-/egr/research-optml/ruoyu.chen/anaconda3/envs/prior_alignment/bin/python}"
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 export TOKENIZERS_PARALLELISM=false
+export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 
 if [[ ! -x "${PYTHON_BIN}" ]]; then
   echo "Python environment not found: ${PYTHON_BIN}" >&2
@@ -12,6 +13,13 @@ if [[ ! -x "${PYTHON_BIN}" ]]; then
 fi
 
 cd "${ROOT_DIR}"
+
+completed_runs=0
+if [[ -d seed_results ]]; then
+  completed_runs="$(find seed_results -type f -name metrics.json | wc -l)"
+fi
+echo "[info] Resume mode: skipping ${completed_runs} completed runs with metrics.json."
+echo "[info] Interrupted runs without metrics.json will restart from epoch 1."
 
 datasets=(saliency-bench)
 if "${PYTHON_BIN}" - <<'PY'

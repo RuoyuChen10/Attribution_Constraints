@@ -1,4 +1,4 @@
-"""Run baseline training with multiple seeds and aggregate final-epoch accuracy."""
+"""Run baseline training with multiple seeds and aggregate best-epoch accuracy."""
 
 from __future__ import annotations
 
@@ -54,7 +54,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Run baseline methods for several seeds. Metrics are taken from the "
-            "last epoch, then summarized with the sample standard deviation."
+            "epoch with the highest evaluation Top-1 accuracy, then summarized "
+            "with the sample standard deviation."
         )
     )
     parser.add_argument("--datasets", nargs="+", choices=DATASETS, default=["saliency-bench"])
@@ -108,15 +109,18 @@ def preflight(datasets: list[str]) -> None:
         raise SystemExit("Dataset preflight failed:\n  - " + "\n  - ".join(errors))
 
 
-def parse_metrics(log_text: str) -> dict[str, float | int]:
+def parse_metrics(log_text: str) -> dict[str, float | int | str]:
     matches = list(EVAL_RE.finditer(log_text))
     if not matches:
         raise RuntimeError("No '[Eval] Epoch ... top1=..., top2=...' line found")
-    last = matches[-1]
+    # Training scripts save a checkpoint only when Top-1 strictly improves, so
+    # keeping the first occurrence on a tie matches their best-checkpoint logic.
+    best = max(matches, key=lambda match: float(match.group("top1")))
     return {
-        "epoch": int(last.group("epoch")),
-        "top1": float(last.group("top1")),
-        "top2": float(last.group("top2")),
+        "epoch": int(best.group("epoch")),
+        "top1": float(best.group("top1")),
+        "top2": float(best.group("top2")),
+        "selection": "best_top1",
     }
 
 
@@ -128,7 +132,27 @@ def run_one(run: Run, args: argparse.Namespace, output_root: Path) -> dict:
     log_file = run_dir / "train.log"
     if metrics_file.is_file() and not args.force:
         print(f"[skip] {run.dataset}/{run.model}/{run.method}/seed={run.seed}")
-        return json.loads(metrics_file.read_text())
+        metrics = json.loads(metrics_file.read_text())
+        # Upgrade results produced by the previous last-epoch policy without
+        # rerunning training. The complete per-epoch evaluations are in train.log.
+        if metrics.get("selection") != "best_top1":
+            if not log_file.is_file():
+                raise RuntimeError(
+                    f"Cannot recompute best-epoch metrics because the log is missing: {log_file}"
+                )
+            metrics = {
+                "dataset": run.dataset,
+                "model": run.model,
+                "method": run.method,
+                "seed": run.seed,
+                **parse_metrics(log_file.read_text()),
+            }
+            metrics_file.write_text(json.dumps(metrics, indent=2) + "\n")
+            print(
+                f"[update] best epoch={metrics['epoch']} "
+                f"top1={metrics['top1']:.4f} top2={metrics['top2']:.4f}"
+            )
+        return metrics
 
     command = [
         args.python,
