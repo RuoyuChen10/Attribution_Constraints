@@ -1,0 +1,38 @@
+# Datasets and downloaded archives
+Saliency-Bench/
+ImageNetS919/
+datasets/
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Training and evaluation outputs
+checkpoints/
+ckpt/
+outputs/
+results/
+runs/
+wandb/
+tensorboard/
+*.ckpt
+*.pth
+*.pt
+
+# Logs and local editor configuration
+*.log
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
