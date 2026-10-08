@@ -155,10 +155,10 @@ The source code is released under the [MIT License](LICENSE). Dataset licenses r
 If you use this code, please cite:
 
 ```bibtex
-@article{chen2026where,
-  title={Where Not to Learn: Prior-Aligned Training with Subset-based Attribution Constraints for Reliable Decision-Making},
-  author={Chen, Ruoyu and Sun, Shangquan and Guo, Xiaoqing and Zhang, Sanyi and Liu, Kangwei and Liu, Shiming and Wang, Zhangcheng and Zhang, Qunli and Zhang, Hua and Cao, Xiaochun},
-  journal={arXiv preprint arXiv:2602.07008},
+@article{chen2026not,
+  title={Where Not to Learn: Prior-Aligned Training with Subset-based Attribution Constraints},
+  author={Chen, Ruoyu and Sun, Shangquan and Guo, Xiaoqing and Liu, Kangwei and Zhang, Sanyi and Wang, Zhangcheng and Liu, Shiming and Zhang, Qunli and Zhang, Hua and Wang, Wei and others},
+  journal={Transactions on Machine Learning Research},
   year={2026}
 }
 ```
