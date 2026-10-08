@@ -1,6 +1,6 @@
-# Where Not to Learn: Prior-Aligned Training with Subset-based Attribution Constraints for Reliable Decision-Making
+# [TMLR 2026] Where Not to Learn: Prior-Aligned Training with Subset-based Attribution Constraints
 
-Official PyTorch implementation of [*Where Not to Learn: Prior-Aligned Training with Subset-based Attribution Constraints for Reliable Decision-Making*](https://arxiv.org/abs/2602.07008).
+Official PyTorch implementation of [*Where Not to Learn: Prior-Aligned Training with Subset-based Attribution Constraints*](https://arxiv.org/abs/2602.07008).
 
 [![arXiv](https://img.shields.io/badge/arXiv-2602.07008-b31b1b.svg)](https://arxiv.org/abs/2602.07008)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
